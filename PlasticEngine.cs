@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using static Plastic.TypeChecker;
 
 namespace Plastic
 {
@@ -24,10 +25,34 @@ namespace Plastic
 
         public enum ImportType
         {
-            Import,           
-            Reference,      
-            Using              
+            Import,
+            Reference,
+            Using
         }
+
+        // Add the missing _builtinFunctions dictionary to resolve the error  
+        public static Dictionary<string, TypeChecker.TypeInfo> _builtinFunctions = new()
+       {
+           { "print", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "len", new TypeChecker.TypeInfo("i32", false, null, false, false, 0) },
+           { "range", new TypeChecker.TypeInfo("range", false, null, false, false, 0) },
+           { "sleep", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "input", new TypeChecker.TypeInfo("string", false, null, false, false, 0) },
+           { "parseInt", new TypeChecker.TypeInfo("f64", false, null, false, false, 0) },
+           { "toString", new TypeChecker.TypeInfo("string", false, null, false, false, 0) },
+           { "exit", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "readFile", new TypeChecker.TypeInfo("string", false, null, false, false, 0) },
+           { "writeFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "appendFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "deleteFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "exists", new TypeChecker.TypeInfo("bool", false, null, false, false, 0) },
+           { "mkdir", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "rmdir", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "listDir", new TypeChecker.TypeInfo("List<string>", false, null, false, false, 0) },
+           { "copyFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "moveFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
+           { "renameFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) }
+       };
     }
 
     public class Token
@@ -805,7 +830,7 @@ namespace Plastic
 
     public class TypeChecker
     {
-        private record TypeInfo(
+        public record TypeInfo(
             string Type,
             bool IsMutable,
             string? Owner,
@@ -1572,7 +1597,12 @@ namespace Plastic
                             return fnInfo.returnType;
                         }
 
-                        if (callee.Name == "print") return _voidType;
+                        // Replace the long if-else chain in GetExpressionType (CallExpr callee) with:
+                        var builtinType = GetBuiltinFunctionType(callee.Name);
+                        if (builtinType != null)
+                            return builtinType;
+
+                       /* if (callee.Name == "print") return _voidType;
                         if (callee.Name == "len") return _i32Type;
                         if (callee.Name == "range") return new TypeInfo("range", false, null, false, false, 0);
                         if (callee.Name == "toString") return _stringType;
@@ -1590,7 +1620,7 @@ namespace Plastic
                         if (callee.Name == "copyFile") return _voidType;
                         if (callee.Name == "moveFile") return _voidType;
                         if (callee.Name == "renameFile") return _voidType;
-                        if(callee.Name == "exit") return _voidType;
+                        if (callee.Name == "exit") return _voidType;*/
 
 
                         throw new Exception($"Undefined function: {callee.Name}");
@@ -1679,7 +1709,13 @@ namespace Plastic
                     throw new Exception($"Unsupported expression type: {expr.GetType().Name}");
             }
         }
-
+        private TypeInfo? GetBuiltinFunctionType(string name)
+        {
+            // Use the static dictionary from ImportStmt to look up the type
+            if (ImportStmt._builtinFunctions.TryGetValue(name, out var type))
+                return type;
+            return null;
+        }
         private bool IsValidType(string type)
         {
             return type == "i32" || type == "f64" || type == "bool" || type == "string" ||
@@ -1738,6 +1774,11 @@ namespace Plastic
 
             _typeCompatibilityCache[key] = false;
             return false;
+        }
+
+        public int getLine()
+        {
+            return _currentLifetime;
         }
     }
 
@@ -2100,7 +2141,8 @@ namespace Plastic
         private readonly Dictionary<string, ProgramNode> _packages = new();
         private readonly Dictionary<string, string> _packagePaths = new();
         public bool shouldLeave = false;
-
+        public Interpreter terpreter;
+        public TypeChecker checker;
         public PlasticEngine()
         {
             RegisterBuiltins();
@@ -2183,38 +2225,39 @@ namespace Plastic
 
         private void RegisterBuiltins()
         {
-            _globals["print"] = new Action<object>(o => Console.WriteLine(o));
-            _globals["len"] = new Func<string, int>(s => s.Length);
-            _globals["range"] = new Func<double, double, object>((start, end) => new { Start = start, End = end });
-            _globals["sleep"] = new Action<double>(ms => System.Threading.Thread.Sleep((int)ms));
-            _globals["input"] = new Func<string?>(() => Console.ReadLine());
-            _globals["parseInt"] = new Func<string, double>(s => {
+            WorkingCreateGlobal("print", new Action<object>(o => Console.WriteLine(o)), "void");
+            WorkingCreateGlobal("len", new Func<string, int>(s => s.Length), "i32");
+            WorkingCreateGlobal("range", new Func<double, double, object>((start, end) => new { Start = start, End = end }), "range");
+            WorkingCreateGlobal("sleep", new Action<double>(ms => System.Threading.Thread.Sleep((int)ms)), "void");
+            WorkingCreateGlobal("input", new Func<string?>(() => Console.ReadLine()), "string");
+            WorkingCreateGlobal("parseInt", new Func<string, double>(s =>
+            {
                 if (double.TryParse(s, out var result)) return result;
                 throw new Exception($"Cannot parse '{s}' as number.");
-            });
-            _globals["toString"] = new Func<object, string>(o => o.ToString());
-            _globals["exit"] = new Action(() =>
+            }), "f64");
+            WorkingCreateGlobal("toString", new Func<object, string>(o => o.ToString()), "string");
+            WorkingCreateGlobal("exit", new Action(() =>
             {
                 shouldLeave = true;
-            });
+            }), "void");
 
-            _globals["readFile"] = new Func<string, string>(path =>
+            WorkingCreateGlobal("readFile", new Func<string, string>(path =>
             {
                 if (File.Exists(path))
                 {
                     return File.ReadAllText(path);
                 }
                 throw new Exception($"File '{path}' not found.");
-            });
-            _globals["writeFile"] = new Action<string, string>((path, content) =>
+            }), "string");
+            WorkingCreateGlobal("writeFile", new Action<string, string>((path, content) =>
             {
                 File.WriteAllText(path, content);
-            });
-            _globals["appendFile"] = new Action<string, string>((path, content) =>
+            }), "void");
+            WorkingCreateGlobal("appendFile", new Action<string, string>((path, content) =>
             {
                 File.AppendAllText(path, content);
-            });
-            _globals["deleteFile"] = new Action<string>(path =>
+            }), "void");
+            WorkingCreateGlobal("deleteFile", new Action<string>(path =>
             {
                 if (File.Exists(path))
                 {
@@ -2224,16 +2267,16 @@ namespace Plastic
                 {
                     throw new Exception($"File '{path}' not found.");
                 }
-            });
-            _globals["exists"] = new Func<string, bool>(path => File.Exists(path));
-            _globals["mkdir"] = new Action<string>(path =>
+            }), "void");
+            WorkingCreateGlobal("exists", new Func<string, bool>(path => File.Exists(path)), "bool");
+            WorkingCreateGlobal("mkdir", new Action<string>(path =>
             {
                 if (!Directory.Exists(path))
                 {
                     Directory.CreateDirectory(path);
                 }
-            });
-            _globals["rmdir"] = new Action<string>(path =>
+            }), "void");
+            WorkingCreateGlobal("rmdir", new Action<string>(path =>
             {
                 if (Directory.Exists(path))
                 {
@@ -2243,16 +2286,16 @@ namespace Plastic
                 {
                     throw new Exception($"Directory '{path}' not found.");
                 }
-            });
-            _globals["listDir"] = new Func<string, List<string>>(path =>
+            }), "void");
+            WorkingCreateGlobal("listDir", new Func<string, List<string>>(path =>
             {
                 if (Directory.Exists(path))
                 {
                     return Directory.GetFiles(path).ToList();
                 }
                 throw new Exception($"Directory '{path}' not found.");
-            });
-            _globals["copyFile"] = new Action<string, string>((source, destination) =>
+            }), "List<string>");
+            WorkingCreateGlobal("copyFile", new Action<string, string>((source, destination) =>
             {
                 if (File.Exists(source))
                 {
@@ -2262,8 +2305,8 @@ namespace Plastic
                 {
                     throw new Exception($"File '{source}' not found.");
                 }
-            });
-            _globals["moveFile"] = new Action<string, string>((source, destination) =>
+            }), "void");
+            WorkingCreateGlobal("moveFile", new Action<string, string>((source, destination) =>
             {
                 if (File.Exists(source))
                 {
@@ -2273,8 +2316,8 @@ namespace Plastic
                 {
                     throw new Exception($"File '{source}' not found.");
                 }
-            });
-            _globals["renameFile"] = new Action<string, string>((oldName, newName) =>
+            }), "void");
+            WorkingCreateGlobal("renameFile", new Action<string, string>((oldName, newName) =>
             {
                 if (File.Exists(oldName))
                 {
@@ -2284,7 +2327,24 @@ namespace Plastic
                 {
                     throw new Exception($"File '{oldName}' not found.");
                 }
-            });
+            }), "void");
+
+            WorkingCreateGlobal("breakPoint", new Action(() => Console.WriteLine($"breakpoint hit! Line: {checker.getLine()}")), "void");
+        }
+
+        public void WorkingCreateGlobal(string name, object value, object typeReturn)
+        {
+            ArgumentNullException.ThrowIfNull(name);
+            ArgumentNullException.ThrowIfNull(value);
+            if (!ImportStmt._builtinFunctions.ContainsKey(name))
+            {
+                ImportStmt._builtinFunctions.Add(name, new TypeInfo(typeReturn.ToString(), false, null, false, false, 0));
+            }
+            else
+            {
+                ImportStmt._builtinFunctions[name] = new TypeInfo(typeReturn.ToString(), false, null, false, false, 0);
+            }
+            _globals[name] = value;
         }
 
         public object? Evaluate(string source, bool readPlugins = true)
@@ -2302,11 +2362,11 @@ namespace Plastic
                     ProcessImports(program);
                 }
 
-                var checker = new TypeChecker();
+                checker = new TypeChecker();
                 checker.Check(program);
 
-                var interpreter = new Interpreter(_globals);
-                return interpreter.Execute(program);
+                terpreter = new Interpreter(_globals);
+                return terpreter.Execute(program);
             }
             catch (Exception ex)
             {
