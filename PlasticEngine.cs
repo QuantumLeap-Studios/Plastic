@@ -863,8 +863,6 @@ namespace Plastic
                 {
                     CheckStatement(stmt, new HashSet<string>());
                 }
-
-                VerifyRequiredImplementations();
             }
             catch (Exception)
             {
@@ -1167,10 +1165,6 @@ namespace Plastic
                     }
                 }
             }
-        }
-
-        private void VerifyRequiredImplementations()
-        {
         }
 
         private void CheckStatement(Stmt stmt, HashSet<string> movedVars)
@@ -1592,7 +1586,7 @@ namespace Plastic
                         if (callee.Name == "exists") return _boolType;
                         if (callee.Name == "mkdir") return _voidType;
                         if (callee.Name == "rmdir") return _voidType;
-                        if (callee.Name == "listDir") return new TypeInfo("List<string>", false, null, false, false, 0);
+                        if (callee.Name == "listDir") return new TypeInfo("List<string>", false, null, false, false, 0); // the fuck do you do?
                         if (callee.Name == "copyFile") return _voidType;
                         if (callee.Name == "moveFile") return _voidType;
                         if (callee.Name == "renameFile") return _voidType;
