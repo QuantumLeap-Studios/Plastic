@@ -5,13 +5,10 @@ using System.Text;
 
 namespace Plastic
 {
-    // === Tokenizer ===
     public enum TokenType
     {
         EOF, Identifier, Number, String,
-        // Keywords
         Fn, Let, If, Else, While, For, Return, Interface,
-        // Symbols
         Plus, Minus, Star, Slash, Percent,
         Equal, EqualEqual, Bang, BangEqual,
         Greater, GreaterEqual, Less, LessEqual,
@@ -27,9 +24,9 @@ namespace Plastic
 
         public enum ImportType
         {
-            Import,   // @import - Import all symbols from a package
-            Reference, // @reference - Reference another package
-            Using      // @using - Import specific symbols from a package
+            Import,           
+            Reference,      
+            Using              
         }
     }
 
@@ -83,7 +80,6 @@ namespace Plastic
                 case '/':
                     if (Match('/'))
                     {
-                        // Comment goes until end of line
                         while (Peek() != '\n' && !IsAtEnd()) Advance();
                     }
                     else
@@ -130,8 +126,6 @@ namespace Plastic
 
             if (directive == "import" || directive == "reference" || directive == "using")
             {
-                // We manually added the token earlier, so we don't add it here
-                // This is just to consume the directive name
             }
             else
             {
@@ -190,7 +184,6 @@ namespace Plastic
         }
     }
 
-    // === AST Nodes ===
     public abstract class AstNode { }
     public class ProgramNode : AstNode
     {
@@ -205,10 +198,9 @@ namespace Plastic
         public required List<(string, string)> Params;
         public required string ReturnType;
         public required List<Stmt> Body;
-        public bool IsPublic { get; set; } = false;  // Add this property
-        public bool alwaysTrue = true; // For testing purposes
+        public bool IsPublic { get; set; } = false;     
+        public bool alwaysTrue = true;    
     }
-    // Update VarDecl class (around line 164)
     public class VarDecl : Stmt
     {
         public required string Name;
@@ -216,20 +208,19 @@ namespace Plastic
         public required Expr Initializer;
         public bool IsMutable { get; set; } = false;
         public bool IsPublic { get; set; } = false;
-        public bool alwaysTrue { get; set; } = true; // New property for reference
+        public bool alwaysTrue { get; set; } = true;     
     }
 
-    // Add after BlockStmt class (around line 178)
     public class StructDecl : Stmt
     {
         public required string Name;
-        public required List<(string, string, bool)> Fields; // (name, type, is_public)
+        public required List<(string, string, bool)> Fields;    
     }
 
     public class EnumDecl : Stmt
     {
         public required string Name;
-        public required List<(string, List<(string, string)>)> Variants; // (variant_name, [(field_name, field_type)])
+        public required List<(string, List<(string, string)>)> Variants;    
     }
 
     public class TraitDecl : Stmt
@@ -241,14 +232,14 @@ namespace Plastic
     public class ImplDecl : Stmt
     {
         public required string TypeName;
-        public required string? TraitName; // null for inherent implementations
+        public required string? TraitName;     
         public required List<FnDecl> Methods;
     }
 
     public class MatchExpr : Expr
     {
         public required Expr Value;
-        public required List<(Expr, Expr)> Arms; // (pattern, result)
+        public required List<(Expr, Expr)> Arms;   
     }
 
     public class FieldAccessExpr : Expr
@@ -317,7 +308,6 @@ namespace Plastic
         public required List<Expr> Arguments;
     }
      
-    // === Parser ===
     public class Parser
     {
         private readonly List<Token> _tokens; private int _current = 0;
@@ -354,7 +344,6 @@ namespace Plastic
             while (!IsAtEnd()) program.Statements.Add(ParseDeclaration());
             return program;
         }
-        // Update ParseDeclaration method (around line 206)
         private Stmt ParseDeclaration()
         {
             if (Match(TokenType.Import, TokenType.Reference, TokenType.Using))
@@ -373,7 +362,6 @@ namespace Plastic
 
         private Stmt ParseImportStatement()
         {
-            // Determine which type of import this is
             ImportStmt.ImportType importType;
             TokenType directiveType = Previous().Type;
 
@@ -386,7 +374,6 @@ namespace Plastic
             else
                 throw new Exception("Invalid import directive type");
 
-            // Get the package name (can be string or identifier)
             string packageName;
             if (Match(TokenType.String))
             {
@@ -396,7 +383,6 @@ namespace Plastic
             {
                 packageName = Previous().Lexeme;
 
-                // Handle dotted package paths (e.g., "core.math")
                 while (Match(TokenType.Dot))
                 {
                     packageName += "." + Consume(TokenType.Identifier, "Expect identifier after '.'").Lexeme;
@@ -412,7 +398,6 @@ namespace Plastic
             return new ImportStmt { PackageName = packageName, Type = importType };
         }
 
-        // Add after ParseCall (around line 335)
         private Expr ParseFieldAccess()
         {
             var expr = ParseCall();
@@ -426,7 +411,6 @@ namespace Plastic
             return expr;
         }
 
-        // Add after ParseReturn (around line 302)
         private Expr ParseMatch()
         {
             var value = ParseExpression();
@@ -446,7 +430,6 @@ namespace Plastic
             return new MatchExpr { Value = value, Arms = arms };
         }
 
-        // Add new methods after ParseVarDecl (around line 251)
         private Stmt ParseStructDecl()
         {
             var name = Consume(TokenType.Identifier, "Expect struct name.").Lexeme;
@@ -544,7 +527,7 @@ namespace Plastic
             {
                 Name = Consume(TokenType.Identifier, $"Expect {kind} name.").Lexeme,
                 Params = new(),
-                ReturnType = string.Empty, // Initialize ReturnType to avoid CS9035  
+                ReturnType = string.Empty,        
                 Body = new()
             };
 
@@ -574,7 +557,6 @@ namespace Plastic
             Consume(TokenType.RBrace, "Expect '}' after block.");
             return stmts;
         }
-        // Modify ParseVarDecl (around line 244)
         private Stmt ParseVarDecl()
         {
             bool isPublic = Match(TokenType.Pub);
@@ -804,7 +786,6 @@ namespace Plastic
             }
             throw new Exception("Expect expression.");
         }
-        // Utility parsing methods
         private bool Match(params TokenType[] types)
         {
             foreach (var t in types) if (Check(t)) { Advance(); return true; }
@@ -822,11 +803,8 @@ namespace Plastic
         private Token Previous() => _tokens[_current - 1];
     }
 
-    // === TypeChecker ===
-    // === TypeChecker ===
     public class TypeChecker
     {
-        // Enhanced type representation with mutability and ownership info
         private record TypeInfo(
             string Type,
             bool IsMutable,
@@ -835,33 +813,24 @@ namespace Plastic
             bool IsReference,
             int Lifetime);
 
-        // Primary storage for variables and their type information
         private Dictionary<string, TypeInfo> _variables = new();
 
-        // Function signatures with full type information including generics
         private Dictionary<string, (List<(string name, TypeInfo type)> parameters, TypeInfo returnType)> _functions = new();
 
-        // Custom type definitions (structs, enums)
         private Dictionary<string, (string kind, Dictionary<string, TypeInfo> members)> _userTypes = new();
 
-        // Trait definitions and implementations
         private Dictionary<string, List<(string name, TypeInfo returnType, List<(string, TypeInfo)> parameters)>> _traits = new();
         private Dictionary<string, Dictionary<string, List<(string name, TypeInfo returnType, List<(string, TypeInfo)> parameters)>>> _implementations = new();
 
-        // Stack of current ownership contexts for checking move semantics
         private Stack<HashSet<string>> _movedVariables = new();
 
-        // Cache for type compatibility checks to improve performance
         private Dictionary<(string, string), bool> _typeCompatibilityCache = new();
 
-        // Lifetimes counter for reference checking
         private int _currentLifetime = 0;
 
-        // Current function context for return type checking
         private string _currentFunction = string.Empty;
         private TypeInfo? _currentReturnType = null;
 
-        // Performance optimization: avoid string concatenation in hot paths
         private static readonly TypeInfo _boolType = new("bool", false, null, false, false, 0);
         private static readonly TypeInfo _voidType = new("void", false, null, false, false, 0);
         private static readonly TypeInfo _i32Type = new("i32", false, null, false, false, 0);
@@ -871,7 +840,6 @@ namespace Plastic
 
         public void Check(ProgramNode program)
         {
-            // Reset state for fresh analysis
             _variables.Clear();
             _functions.Clear();
             _userTypes.Clear();
@@ -883,32 +851,23 @@ namespace Plastic
 
             try
             {
-                // Multi-pass analysis for interdependent declarations
-
-                // First pass: collect user-defined types (structs, enums)
                 CollectUserTypes(program);
 
-                // Second pass: collect traits and trait bounds
                 CollectTraits(program);
 
-                // Third pass: collect function signatures and implementations
                 CollectFunctionSignatures(program);
 
-                // Fourth pass: verify implementations match trait definitions
                 VerifyTraitImplementations();
 
-                // Fifth pass: perform detailed type checking of all statements and expressions
                 foreach (var stmt in program.Statements)
                 {
                     CheckStatement(stmt, new HashSet<string>());
                 }
 
-                // Final pass: verify all required trait implementations exist
                 VerifyRequiredImplementations();
             }
             catch (Exception)
             {
-                // Clean up resources
                 _typeCompatibilityCache.Clear();
                 _movedVariables.Clear();
                 throw;
@@ -925,7 +884,6 @@ namespace Plastic
                         var members = new Dictionary<string, TypeInfo>();
                         foreach (var (name, type, isPublic) in sd.Fields)
                         {
-                            // Validate field type
                             if (!IsValidType(type) && !_userTypes.ContainsKey(type))
                             {
                                 throw new Exception($"Unknown type '{type}' for field '{name}' in struct '{sd.Name}'");
@@ -940,10 +898,8 @@ namespace Plastic
                         var enumMembers = new Dictionary<string, TypeInfo>();
                         foreach (var (variantName, fields) in ed.Variants)
                         {
-                            // Create composite type for variant
                             var variantType = $"{ed.Name}::{variantName}";
 
-                            // For each field in the variant
                             int fieldIndex = 0;
                             foreach (var (fieldName, fieldType) in fields)
                             {
@@ -952,7 +908,6 @@ namespace Plastic
                                     throw new Exception($"Unknown type '{fieldType}' for field '{fieldName}' in enum variant '{variantName}'");
                                 }
 
-                                // Use index-based field names for unnamed fields
                                 var effectiveFieldName = string.IsNullOrEmpty(fieldName)
                                     ? $"{fieldIndex++}"
                                     : fieldName;
@@ -965,7 +920,6 @@ namespace Plastic
                 }
             }
 
-            // Second pass to resolve any interdependent types
             ValidateNoCircularTypeDefinitions();
         }
 
@@ -1056,8 +1010,8 @@ namespace Plastic
                         var parameters = new List<(string name, TypeInfo type)>();
                         foreach (var (paramName, paramType) in fn.Params)
                         {
-                            var isMutable = false; // In a full impl, we'd check for '&mut' prefix
-                            var isReference = false; // Check for '&' prefix
+                            var isMutable = false;          
+                            var isReference = false;     
 
                             var effectiveType = paramType;
                             if (paramType.StartsWith("&mut "))
@@ -1089,7 +1043,6 @@ namespace Plastic
                         break;
 
                     case ImplDecl impl:
-                        // Handle implementing traits
                         if (impl.TraitName != null)
                         {
                             if (!_traits.ContainsKey(impl.TraitName))
@@ -1123,7 +1076,6 @@ namespace Plastic
 
                                 methods.Add((method.Name, new TypeInfo(method.ReturnType, false, null, false, false, 0), parameters));
 
-                                // Also register as a function with 'self' parameter
                                 var fullParams = new List<(string name, TypeInfo type)>();
                                 fullParams.Add(("self", new TypeInfo(impl.TypeName, false, null, false, true, 0)));
                                 foreach (var (name, type) in parameters)
@@ -1141,7 +1093,6 @@ namespace Plastic
 
                             _implementations[impl.TraitName][impl.TypeName] = methods;
                         }
-                        // Handle inherent implementations
                         else
                         {
                             if (!_userTypes.ContainsKey(impl.TypeName))
@@ -1153,7 +1104,6 @@ namespace Plastic
                             {
                                 parameters = new List<(string name, TypeInfo type)>();
 
-                                // Add implicit self parameter
                                 parameters.Add(("self", new TypeInfo(impl.TypeName, false, null, false, true, 0)));
 
                                 foreach (var (paramName, paramType) in method.Params)
@@ -1187,7 +1137,6 @@ namespace Plastic
 
                 foreach (var (typeName, methods) in impls)
                 {
-                    // Check that all required trait methods are implemented
                     var implementedMethods = methods.Select(m => m.name).ToHashSet();
                     foreach (var traitMethod in traitMethods)
                     {
@@ -1196,22 +1145,18 @@ namespace Plastic
                             throw new Exception($"Type '{typeName}' does not implement required trait method '{traitMethod.name}' from trait '{traitName}'");
                         }
 
-                        // Find the implementation
                         var impl = methods.First(m => m.name == traitMethod.name);
 
-                        // Check return type
                         if (!AreTypesCompatible(impl.returnType.Type, traitMethod.returnType.Type))
                         {
                             throw new Exception($"Return type mismatch in implementation of '{traitMethod.name}' for trait '{traitName}': expected '{traitMethod.returnType.Type}', got '{impl.returnType.Type}'");
                         }
 
-                        // Check parameter count
                         if (impl.parameters.Count != traitMethod.parameters.Count)
                         {
                             throw new Exception($"Parameter count mismatch in implementation of '{traitMethod.name}' for trait '{traitName}': expected {traitMethod.parameters.Count}, got {impl.parameters.Count}");
                         }
 
-                        // Check parameter types
                         for (int i = 0; i < impl.parameters.Count; i++)
                         {
                             if (!AreTypesCompatible(impl.parameters[i].Item2.Type, traitMethod.parameters[i].Item2.Type))
@@ -1226,8 +1171,6 @@ namespace Plastic
 
         private void VerifyRequiredImplementations()
         {
-            // This would check that any usage of trait bounds has corresponding implementations
-            // Simplified for now
         }
 
         private void CheckStatement(Stmt stmt, HashSet<string> movedVars)
@@ -1241,23 +1184,19 @@ namespace Plastic
                 case VarDecl vd:
                     var exprType = GetExpressionType(vd.Initializer, movedVars);
 
-                    // Allow numeric coercion between i32/f64/etc.
                     if (exprType.Type != vd.Type && !(IsNumericType(vd.Type) && IsNumericType(exprType.Type)))
                     {
                         throw new Exception($"Type mismatch in variable declaration: expected {vd.Type}, got {exprType.Type}");
                     }
 
-                    // Transfer ownership if the value is moved
                     string? owner = null;
                     if (vd.Initializer is VariableExpr ve && _variables.TryGetValue(ve.Name, out var sourceVar) && !sourceVar.IsReference)
                     {
-                        // Transferring ownership from source variable to this one
                         owner = $"var:{vd.Name}";
                         movedVars.Add(ve.Name);
                     }
                     else
                     {
-                        // New ownership
                         owner = $"var:{vd.Name}";
                     }
 
@@ -1271,7 +1210,6 @@ namespace Plastic
                         throw new Exception("Condition must be a boolean expression");
                     }
 
-                    // Track moved variables in each branch
                     var thenMoved = new HashSet<string>(movedVars);
                     var elseMoved = new HashSet<string>(movedVars);
 
@@ -1287,16 +1225,13 @@ namespace Plastic
                             CheckStatement(s, elseMoved);
                         }
 
-                        // Variables moved in both branches are definitely moved
                         foreach (var moved in thenMoved.Intersect(elseMoved))
                         {
                             movedVars.Add(moved);
                         }
                     }
-                    // Variables moved in the then branch may or may not be moved overall
                     else
                     {
-                        // In a full implementation, we'd track potentially moved vars
                     }
                     break;
 
@@ -1307,8 +1242,6 @@ namespace Plastic
                         throw new Exception("Condition must be a boolean expression");
                     }
 
-                    // Conservative approach: don't allow moves inside loops
-                    // because we can't statically know how many times the loop executes
                     _movedVariables.Push(new HashSet<string>());
 
                     foreach (var s in ws.Body)
@@ -1316,7 +1249,6 @@ namespace Plastic
                         CheckStatement(s, _movedVariables.Peek());
                     }
 
-                    // Check that no variables were moved inside the loop
                     if (_movedVariables.Pop().Count > 0)
                     {
                         throw new Exception("Cannot move variables inside loops with unknown iteration count");
@@ -1332,23 +1264,19 @@ namespace Plastic
                         throw new Exception("For loop bounds must be numeric");
                     }
 
-                    // Set up the range variable with a new scope
                     _variables[fs.Var] = new TypeInfo("i32", false, null, false, false, _currentLifetime);
 
-                    // Create a new move tracking scope for the loop
                     var loopMoved = new HashSet<string>();
                     foreach (var s in fs.Body)
                     {
                         CheckStatement(s, loopMoved);
                     }
 
-                    // Apply moves from loop (conservatively - could be more nuanced)
                     foreach (var moved in loopMoved)
                     {
                         movedVars.Add(moved);
                     }
 
-                    // Clean up the range variable
                     _variables.Remove(fs.Var);
                     break;
 
@@ -1373,11 +1301,9 @@ namespace Plastic
                     break;
 
                 case BlockStmt bs:
-                    // Create a new scope with increased lifetime
                     _currentLifetime++;
                     var outerLifetime = _currentLifetime;
 
-                    // Track ownership changes locally first
                     var localMovedVars = new HashSet<string>(movedVars);
 
                     foreach (var s in bs.Statements)
@@ -1385,13 +1311,11 @@ namespace Plastic
                         CheckStatement(s, localMovedVars);
                     }
 
-                    // Propagate ownership changes up
                     foreach (var moved in localMovedVars)
                     {
                         movedVars.Add(moved);
                     }
 
-                    // Validate that no references with this lifetime escape
                     ValidateNoEscapingReferences(outerLifetime);
                     _currentLifetime--;
                     break;
@@ -1400,7 +1324,6 @@ namespace Plastic
                 case EnumDecl _:
                 case TraitDecl _:
                 case ImplDecl _:
-                    // These were handled in the collection phases
                     break;
 
                 default:
@@ -1410,15 +1333,10 @@ namespace Plastic
 
         private void ValidateNoEscapingReferences(int lifetime)
         {
-            // Check that no references with this lifetime are stored in longer-lived variables
             foreach (var (name, info) in _variables)
             {
                 if (info.IsReference && info.Lifetime == lifetime)
                 {
-                    // Don't allow storing references in longer-lived variables
-                    // In a full implementation, we'd check specific storage locations
-
-                    // For simplicity, just warn about all references with this lifetime
                     Console.WriteLine($"Warning: Reference in '{name}' might outlive its scope.");
                 }
             }
@@ -1426,24 +1344,19 @@ namespace Plastic
 
         private void CheckFunction(FnDecl fn)
         {
-            // Save outer context
             var oldFunction = _currentFunction;
             var oldReturnType = _currentReturnType;
             var oldLifetime = _currentLifetime;
 
-            // Set up function context
             _currentFunction = fn.Name;
             _currentReturnType = new TypeInfo(fn.ReturnType, false, null, false, false, 0);
             _currentLifetime++;
 
-            // Clear moved variables for this function
             var movedVars = new HashSet<string>();
 
-            // Create a new scope for parameters
             var outerVariables = new Dictionary<string, TypeInfo>(_variables);
             _variables.Clear();
 
-            // Add parameters to local scope
             foreach (var (name, type) in fn.Params)
             {
                 var isMutable = false;
@@ -1465,19 +1378,16 @@ namespace Plastic
                 _variables[name] = new TypeInfo(effectiveType, isMutable, $"param:{name}", false, isReference, _currentLifetime);
             }
 
-            // Check function body
             foreach (var stmt in fn.Body)
             {
                 CheckStatement(stmt, movedVars);
             }
 
-            // Validate return paths (simplified)
             if (fn.ReturnType != "void" && !HasReturnOnAllPaths(fn.Body))
             {
                 throw new Exception($"Function '{fn.Name}' might not return a value on all code paths");
             }
 
-            // Restore outer context
             _variables = outerVariables;
             _currentFunction = oldFunction;
             _currentReturnType = oldReturnType;
@@ -1486,21 +1396,16 @@ namespace Plastic
 
         private bool HasReturnOnAllPaths(List<Stmt> statements)
         {
-            // Simplified check for returns on all paths
-            // In a real implementation, this would be more sophisticated
-
             if (statements.Count == 0)
             {
                 return false;
             }
 
-            // If the last statement is a return, the path returns
             if (statements[statements.Count - 1] is ReturnStmt)
             {
                 return true;
             }
 
-            // Check if the last statement is an if with returns in both branches
             if (statements[statements.Count - 1] is IfStmt ifStmt)
             {
                 bool thenReturns = HasReturnOnAllPaths(ifStmt.ThenBranch);
@@ -1509,7 +1414,6 @@ namespace Plastic
                 return thenReturns && elseReturns;
             }
 
-            // Check if the last statement is a block that returns
             if (statements[statements.Count - 1] is BlockStmt blockStmt)
             {
                 return HasReturnOnAllPaths(blockStmt.Statements);
@@ -1534,7 +1438,6 @@ namespace Plastic
                 case VariableExpr ve:
                     if (_variables.TryGetValue(ve.Name, out var varInfo))
                     {
-                        // Check for use after move
                         if (movedVars.Contains(ve.Name))
                         {
                             throw new Exception($"Use of moved variable '{ve.Name}'");
@@ -1547,7 +1450,6 @@ namespace Plastic
                 case BinaryExpr be:
                     var leftType = GetExpressionType(be.Left, movedVars);
 
-                    // For assignments, we need to check mutability before evaluating the right side
                     if (be.Op.Type == TokenType.Equal)
                     {
                         if (be.Left is VariableExpr varExpr)
@@ -1559,7 +1461,6 @@ namespace Plastic
                         }
                         else if (be.Left is FieldAccessExpr fieldAccess)
                         {
-                            // Would check field mutability in a full implementation
                         }
                         else
                         {
@@ -1598,24 +1499,18 @@ namespace Plastic
                         case TokenType.GreaterEqual:
                         case TokenType.Less:
                         case TokenType.LessEqual:
-                            // Comparison operators return bool
                             return _boolType;
 
                         case TokenType.Equal:
-                            // Assignment returns the assigned value's type
-
-                            // Check type compatibility for assignment
                             if (!AreTypesCompatible(leftType.Type, rightType.Type))
                             {
                                 throw new Exception($"Cannot assign {rightType.Type} to {leftType.Type}");
                             }
 
-                            // Handle ownership transfer in assignment
                             if (be.Right is VariableExpr ve2 && !rightType.IsReference)
                             {
                                 movedVars.Add(ve2.Name);
 
-                                // If we're assigning from a variable, transfer ownership
                                 if (be.Left is VariableExpr targetVar)
                                 {
                                     if (_variables.TryGetValue(targetVar.Name, out var targetInfo))
@@ -1659,13 +1554,11 @@ namespace Plastic
                     {
                         if (_functions.TryGetValue(callee.Name, out var fnInfo))
                         {
-                            // Check argument count
                             if (ce.Arguments.Count != fnInfo.parameters.Count)
                             {
                                 throw new Exception($"Function {callee.Name} expects {fnInfo.parameters.Count} arguments but got {ce.Arguments.Count}");
                             }
 
-                            // Check argument types
                             for (int i = 0; i < ce.Arguments.Count; i++)
                             {
                                 var argType = GetExpressionType(ce.Arguments[i], movedVars);
@@ -1676,10 +1569,8 @@ namespace Plastic
                                     throw new Exception($"Argument {i + 1} type mismatch: expected {paramInfo.Type}, got {argType.Type}");
                                 }
 
-                                // Check for moves
                                 if (ce.Arguments[i] is VariableExpr argVar && paramInfo.IsReference == false)
                                 {
-                                    // The argument is moved if the parameter takes ownership
                                     movedVars.Add(argVar.Name);
                                 }
                             }
@@ -1687,28 +1578,40 @@ namespace Plastic
                             return fnInfo.returnType;
                         }
 
-                        // Check for built-in functions
                         if (callee.Name == "print") return _voidType;
                         if (callee.Name == "len") return _i32Type;
                         if (callee.Name == "range") return new TypeInfo("range", false, null, false, false, 0);
                         if (callee.Name == "toString") return _stringType;
+                        if (callee.Name == "sleep") return _voidType;
+                        if (callee.Name == "input") return _stringType;
+                        if (callee.Name == "parseInt") return _f64Type;
+                        if (callee.Name == "readFile") return _stringType;
+                        if (callee.Name == "writeFile") return _voidType;
+                        if (callee.Name == "appendFile") return _voidType;
+                        if (callee.Name == "deleteFile") return _voidType;
+                        if (callee.Name == "exists") return _boolType;
+                        if (callee.Name == "mkdir") return _voidType;
+                        if (callee.Name == "rmdir") return _voidType;
+                        if (callee.Name == "listDir") return new TypeInfo("List<string>", false, null, false, false, 0);
+                        if (callee.Name == "copyFile") return _voidType;
+                        if (callee.Name == "moveFile") return _voidType;
+                        if (callee.Name == "renameFile") return _voidType;
+                        if(callee.Name == "exit") return _voidType;
+
 
                         throw new Exception($"Undefined function: {callee.Name}");
                     }
                     else if (ce.Callee is FieldAccessExpr methodAccess)
                     {
-                        // Method call on an object
                         var methodName = $"{GetExpressionType(methodAccess.Object, movedVars).Type}::{methodAccess.FieldName}";
 
                         if (_functions.TryGetValue(methodName, out var methodInfo))
                         {
-                            // First param is 'self', check remaining params
                             if (ce.Arguments.Count != methodInfo.parameters.Count - 1)
                             {
                                 throw new Exception($"Method {methodName} expects {methodInfo.parameters.Count - 1} arguments but got {ce.Arguments.Count}");
                             }
 
-                            // Check argument types (skipping 'self')
                             for (int i = 0; i < ce.Arguments.Count; i++)
                             {
                                 var argType = GetExpressionType(ce.Arguments[i], movedVars);
@@ -1731,7 +1634,6 @@ namespace Plastic
                 case FieldAccessExpr fa:
                     var objectType = GetExpressionType(fa.Object, movedVars);
 
-                    // Check if this is a field access on a struct
                     if (_userTypes.TryGetValue(objectType.Type, out var typeInfo) && typeInfo.kind == "struct")
                     {
                         if (typeInfo.members.TryGetValue(fa.FieldName, out var fieldType))
@@ -1747,7 +1649,6 @@ namespace Plastic
                 case MatchExpr ma:
                     var valueType = GetExpressionType(ma.Value, movedVars);
 
-                    // Verify match arms
                     if (ma.Arms.Count == 0)
                     {
                         throw new Exception("Match expression must have at least one arm");
@@ -1756,7 +1657,6 @@ namespace Plastic
                     TypeInfo resultType = null;
                     foreach (var (pattern, result) in ma.Arms)
                     {
-                        // Simplified pattern matching - in a full implementation we'd check pattern compatibility
                         var patternType = GetExpressionType(pattern, new HashSet<string>());
 
                         if (!AreTypesCompatible(valueType.Type, patternType.Type))
@@ -1800,7 +1700,6 @@ namespace Plastic
 
         private TypeInfo CombineNumericTypes(string type1, string type2)
         {
-            // Simplified numeric type promotion
             if (type1 == "f64" || type2 == "f64") return _f64Type;
             if (type1 == "f32" || type2 == "f32") return new TypeInfo("f32", false, null, false, false, 0);
             if (type1 == "i64" || type2 == "i64") return new TypeInfo("i64", false, null, false, false, 0);
@@ -1809,37 +1708,31 @@ namespace Plastic
 
         private bool AreTypesCompatible(string sourceType, string targetType)
         {
-            // Check cache first for performance
             var key = (sourceType, targetType);
             if (_typeCompatibilityCache.TryGetValue(key, out bool result))
             {
                 return result;
             }
 
-            // Exact match
             if (sourceType == targetType)
             {
                 _typeCompatibilityCache[key] = true;
                 return true;
             }
 
-            // Numeric types are compatible for coercion
             if (IsNumericType(sourceType) && IsNumericType(targetType))
             {
                 _typeCompatibilityCache[key] = true;
                 return true;
             }
 
-            // References compatibility
             if (sourceType.StartsWith("&") && targetType.StartsWith("&"))
             {
                 var sourceBare = sourceType.StartsWith("&mut ") ? sourceType.Substring(5) : sourceType.Substring(1);
                 var targetBare = targetType.StartsWith("&mut ") ? targetType.Substring(5) : targetType.Substring(1);
 
-                // References are compatible if their base types are compatible
                 bool compatible = AreTypesCompatible(sourceBare, targetBare);
 
-                // But you can't convert a shared reference to a mutable one
                 if (compatible && !sourceType.StartsWith("&mut ") && targetType.StartsWith("&mut "))
                 {
                     compatible = false;
@@ -1849,15 +1742,12 @@ namespace Plastic
                 return compatible;
             }
 
-            // Trait compatibility would be checked here
-
             _typeCompatibilityCache[key] = false;
             return false;
         }
     }
 
 
-    // === Environment ===
     public class Environment
     {
         private readonly Dictionary<string, object?> _values = new();
@@ -1904,7 +1794,6 @@ namespace Plastic
         }
     }
 
-    // === Interpreter ===
     public class Interpreter
     {
         private readonly Environment _globals = new();
@@ -1914,7 +1803,6 @@ namespace Plastic
         {
             _environment = _globals;
 
-            // Add globals to environment
             foreach (var (name, value) in globals)
             {
                 _globals.Define(name, value);
@@ -1931,7 +1819,6 @@ namespace Plastic
                     result = ExecuteStmt(stmt);
                 }
 
-                // If there's a main function, call it
                 try
                 {
                     var mainFn = _globals.Get("main");
@@ -1942,7 +1829,22 @@ namespace Plastic
                 }
                 catch (Exception)
                 {
-                    // No main function, continue with result
+                }
+
+                try
+                {
+                    var updateFn = _globals.Get("update");
+                    if (updateFn != null)
+                    {
+                        while (true)
+                        {
+                            result = CallFunction(updateFn as FnDecl, new List<object?>());
+                            System.Threading.Thread.Sleep(16);   
+                        }
+                    }
+                }
+                catch
+                {
                 }
 
                 return result;
@@ -1999,7 +1901,6 @@ namespace Plastic
                     var start = Convert.ToInt32(Evaluate(fs.Start));
                     var end = Convert.ToInt32(Evaluate(fs.End));
 
-                    // Create a new environment for the loop
                     var previous = _environment;
                     try
                     {
@@ -2144,11 +2045,10 @@ namespace Plastic
             };
         }
 
-        private object? CallFunction(FnDecl function, List<object?> arguments)
+        public object? CallFunction(FnDecl function, List<object?> arguments)
         {
             var environment = new Environment(_globals);
 
-            // Bind parameters to arguments
             for (int i = 0; i < function.Params.Count; i++)
             {
                 environment.Define(function.Params[i].Item1, arguments[i]);
@@ -2200,12 +2100,12 @@ namespace Plastic
         public ReturnException(object? value) { Value = value; }
     }
 
-    // === Engine & Builtins ===
     public class PlasticEngine
     {
         private readonly Dictionary<string, object> _globals = new();
         private readonly Dictionary<string, ProgramNode> _packages = new();
         private readonly Dictionary<string, string> _packagePaths = new();
+        public bool shouldLeave = false;
 
         public PlasticEngine()
         {
@@ -2219,22 +2119,19 @@ namespace Plastic
             _globals[name] = value;
         }
 
-        public void RegisterPackagePath(string name, string filePath) // this will be automated 
+        public void RegisterPackagePath(string name, string filePath)      
         {
             _packagePaths[name] = filePath;
         }
         private ProgramNode LoadPackage(string packageName)
         {
-            // Check if already loaded
             if (_packages.TryGetValue(packageName, out var program))
             {
                 return program;
             }
 
-            // Check if path is registered
             if (!_packagePaths.TryGetValue(packageName, out var path))
             {
-                // Try to resolve using standard locations
                 path = ResolvePackagePath(packageName);
                 if (path == null)
                 {
@@ -2242,14 +2139,12 @@ namespace Plastic
                 }
             }
 
-            // Load and parse the package
             string source = File.ReadAllText(path);
             var lexer = new Lexer(source);
             var tokens = lexer.ScanTokens();
             var parser = new Parser(tokens);
             var packageProgram = parser.Parse();
 
-            // Cache the parsed program
             _packages[packageName] = packageProgram;
 
             return packageProgram;
@@ -2258,7 +2153,6 @@ namespace Plastic
         {
             var searchPath = "";
 
-            // Log the package search paths using the "plasticcmd pluginpath" command
             try
             {
                 var process = new System.Diagnostics.Process
@@ -2282,10 +2176,8 @@ namespace Plastic
                 Console.WriteLine($"Failed to run 'plasticcmd pluginpath': {ex.Message}");
             }
 
-            // Convert package.name to package/name
             var packagePath = packageName.Replace('.', Path.DirectorySeparatorChar);
 
-            // Try with .pl extension
             var fullPath = Path.Combine(searchPath, $"{packagePath}.pl");
             if (File.Exists(fullPath))
             {
@@ -2300,14 +2192,18 @@ namespace Plastic
             _globals["print"] = new Action<object>(o => Console.WriteLine(o));
             _globals["len"] = new Func<string, int>(s => s.Length);
             _globals["range"] = new Func<double, double, object>((start, end) => new { Start = start, End = end });
+            _globals["sleep"] = new Action<double>(ms => System.Threading.Thread.Sleep((int)ms));
             _globals["input"] = new Func<string?>(() => Console.ReadLine());
             _globals["parseInt"] = new Func<string, double>(s => {
                 if (double.TryParse(s, out var result)) return result;
                 throw new Exception($"Cannot parse '{s}' as number.");
             });
             _globals["toString"] = new Func<object, string>(o => o.ToString());
+            _globals["exit"] = new Action(() =>
+            {
+                shouldLeave = true;
+            });
 
-            // add file stuff
             _globals["readFile"] = new Func<string, string>(path =>
             {
                 if (File.Exists(path))
@@ -2427,15 +2323,12 @@ namespace Plastic
 
         private void ProcessImports(ProgramNode program)
         {
-            // Extract import statements
             var imports = program.Statements.Where(s => s is ImportStmt).Cast<ImportStmt>().ToList();
 
-            // Process each import
             foreach (var import in imports)
             {
                 var packageProgram = LoadPackage(import.PackageName);
 
-                // Handle different import types
                 switch (import.Type)
                 {
                     case ImportStmt.ImportType.Import:
@@ -2450,28 +2343,23 @@ namespace Plastic
                 }
             }
 
-            // Remove the import statements from the program
             program.Statements.RemoveAll(s => s is ImportStmt);
         }
 
-        // Merge exported symbols from one program into another
         private void MergeExportedSymbols(ProgramNode target, ProgramNode source)
         {
-            // Find all statements with exported symbols
             var exportedSymbols = source.Statements.Where(s =>
                 (s is FnDecl && ((FnDecl)s).alwaysTrue) ||
                 (s is VarDecl && ((VarDecl)s).alwaysTrue) ||
-                (s is StructDecl) ||  // Assume structs are always public
-                (s is EnumDecl) ||    // Assume enums are always public 
-                (s is TraitDecl)      // Assume traits are always public
+                (s is StructDecl) ||       
+                (s is EnumDecl) ||          
+                (s is TraitDecl)           
             ).ToList();
 
-            // Add them to the target program
             target.Statements.InsertRange(0, exportedSymbols);
         }
     }
 
-    // === Sample Usage ===
     public static class PlasticDemo
     {
         public static void Main()
@@ -2494,20 +2382,28 @@ return 0;
         }
     }
 
-    /// <summary>
-    /// Contains features such as compiling, interpreting, and executing Plastic code.
-    /// </summary>
     public static class EngineFeatures
     {
-        /// <summary>
-        /// Interprets and executes the Plastic code.
-        /// </summary>
-        public static object? Interpret(string source, bool debugReturn = false)
+        public static InterpretResult? Interpret(string source, bool debugReturn = false)
         {
             var engine = new PlasticEngine();
             if (!debugReturn)
             {
-                return engine.Evaluate(source);
+                object result = engine.Evaluate(source);
+                if(engine.shouldLeave)
+                {
+                    Console.WriteLine("Closed.");
+                    return new InterpretResult
+                    {
+                        Result = result,
+                        PlasticEngine = engine
+                    };
+                }
+                return new InterpretResult
+                {
+                    Result = result,
+                    PlasticEngine = engine
+                };
             }
             else
             {
@@ -2520,8 +2416,23 @@ return 0;
                 {
                     Console.WriteLine("No result.");
                 }
-                return result;
+                return new InterpretResult
+                {
+                    Result = engine.Evaluate(source),
+                    PlasticEngine = engine
+                };
             }
+        }
+
+        public static bool ShouldLeave(PlasticEngine engine)
+        {
+            return engine.shouldLeave;
+        }
+
+        public class InterpretResult
+        {
+            public object? Result { get; set; }
+            public PlasticEngine PlasticEngine { get; set; }
         }
     }
 }
