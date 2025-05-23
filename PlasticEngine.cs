@@ -2329,7 +2329,142 @@ namespace Plastic
                 }
             }), "void");
 
+            WorkingCreateGlobal("showErrorBox", new Action<string>((message) =>
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("\n--- ERROR ---");
+                Console.WriteLine(message);
+                Console.ResetColor();
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadKey(true);
+            }), "void");
+
+            WorkingCreateGlobal("showConfirmBox", new Func<string, string, bool>((message, title) =>
+            {
+                Console.WriteLine($"\n--- {title} ---");
+                Console.WriteLine(message);
+                Console.Write("Enter Y for Yes or N for No: ");
+
+                while (true)
+                {
+                    var key = Console.ReadKey(true);
+                    if (char.ToUpper(key.KeyChar) == 'Y')
+                    {
+                        Console.WriteLine("Yes");
+                        return true;
+                    }
+                    else if (char.ToUpper(key.KeyChar) == 'N')
+                    {
+                        Console.WriteLine("No");
+                        return false;
+                    }
+                }
+            }), "bool");
+
+            WorkingCreateGlobal("openFile", new Func<string, bool>((fileName) =>
+            {
+                try
+                {
+                    var process = new System.Diagnostics.Process();
+                    process.StartInfo.FileName = fileName;
+                    process.StartInfo.UseShellExecute = true;
+                    return process.Start();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to open file: {ex.Message}");
+                    return false;
+                }
+            }), "bool");
+
+            WorkingCreateGlobal("runProcess", new Func<string, string, bool>((fileName, args) =>
+            {
+                try
+                {
+                    var process = new System.Diagnostics.Process();
+                    process.StartInfo.FileName = fileName;
+                    process.StartInfo.Arguments = args;
+                    return process.Start();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to run process: {ex.Message}");
+                    return false;
+                }
+            }), "bool");
+
+            WorkingCreateGlobal("runProcessAndWait", new Func<string, string, int>((fileName, args) =>
+            {
+                try
+                {
+                    var process = new System.Diagnostics.Process();
+                    process.StartInfo.FileName = fileName;
+                    process.StartInfo.Arguments = args;
+                    process.Start();
+                    process.WaitForExit();
+                    return process.ExitCode;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to run process: {ex.Message}");
+                    return -1;
+                }
+            }), "i32");
+
+            WorkingCreateGlobal("openFileDialog", new Func<string, string, string>((title, filter) =>
+            {
+                Console.WriteLine($"\n--- {title} ---");
+                Console.WriteLine($"File filter: {filter}");
+                Console.Write("Please enter the full path to the file: ");
+                return Console.ReadLine() ?? string.Empty;
+            }), "string");
+
+            WorkingCreateGlobal("saveFileDialog", new Func<string, string, string>((title, filter) =>
+            {
+                Console.WriteLine($"\n--- {title} ---");
+                Console.WriteLine($"File filter: {filter}");
+                Console.Write("Please enter the full path where to save the file: ");
+                return Console.ReadLine() ?? string.Empty;
+            }), "string");
+
             WorkingCreateGlobal("breakPoint", new Action(() => Console.WriteLine($"breakpoint hit! Line: {checker.getLine()}")), "void");
+            WorkingCreateGlobal("now", new Func<string>(() => DateTime.Now.ToString("o")), "string");
+            WorkingCreateGlobal("timestamp", new Func<long>(() => DateTimeOffset.UtcNow.ToUnixTimeSeconds()), "i64");
+            WorkingCreateGlobal("formatDate", new Func<string, string, string>((format, culture) =>
+            {
+                return DateTime.Now.ToString(format, new System.Globalization.CultureInfo(culture));
+            }), "string");
+            WorkingCreateGlobal("abs", new Func<double, double>(Math.Abs), "f64");
+            WorkingCreateGlobal("floor", new Func<double, double>(Math.Floor), "f64");
+            WorkingCreateGlobal("ceil", new Func<double, double>(Math.Ceiling), "f64");
+            WorkingCreateGlobal("round", new Func<double, double>(Math.Round), "f64");
+            WorkingCreateGlobal("sqrt", new Func<double, double>(Math.Sqrt), "f64");
+            WorkingCreateGlobal("pow", new Func<double, double, double>(Math.Pow), "f64");
+            WorkingCreateGlobal("max", new Func<double, double, double>(Math.Max), "f64");
+            WorkingCreateGlobal("min", new Func<double, double, double>(Math.Min), "f64");
+            WorkingCreateGlobal("clamp", new Func<double, double, double, double>((val, min, max) => Math.Max(min, Math.Min(max, val))), "f64");
+            WorkingCreateGlobal("toUpper", new Func<string, string>(s => s.ToUpperInvariant()), "string");
+            WorkingCreateGlobal("toLower", new Func<string, string>(s => s.ToLowerInvariant()), "string");
+            WorkingCreateGlobal("trim", new Func<string, string>(s => s.Trim()), "string");
+            WorkingCreateGlobal("startsWith", new Func<string, string, bool>((s, prefix) => s.StartsWith(prefix)), "bool");
+            WorkingCreateGlobal("endsWith", new Func<string, string, bool>((s, suffix) => s.EndsWith(suffix)), "bool");
+            WorkingCreateGlobal("contains", new Func<string, string, bool>((s, substr) => s.Contains(substr)), "bool");
+            WorkingCreateGlobal("split", new Func<string, string, List<string>>((s, sep) => s.Split(new[] { sep }, StringSplitOptions.None).ToList()), "List<string>");
+            WorkingCreateGlobal("join", new Func<List<string>, string, string>((list, sep) => string.Join(sep, list)), "string");
+            WorkingCreateGlobal("isNull", new Func<object, bool>(o => o == null), "bool");
+            WorkingCreateGlobal("isNumber", new Func<object, bool>(o => double.TryParse(o?.ToString(), out _)), "bool");
+            WorkingCreateGlobal("isString", new Func<object, bool>(o => o is string), "bool");
+            WorkingCreateGlobal("toInt", new Func<object, int>(o => Convert.ToInt32(o)), "i32");
+            WorkingCreateGlobal("toFloat", new Func<object, double>(o => Convert.ToDouble(o)), "f64");
+            WorkingCreateGlobal("uuid", new Func<string>(() => Guid.NewGuid().ToString()), "string");
+            WorkingCreateGlobal("env", new Func<string, string>(key => System.Environment.GetEnvironmentVariable(key) ?? string.Empty), "string");
+            WorkingCreateGlobal("log", new Action<object>(o => Console.WriteLine($"[LOG] {o}")), "void");
+            WorkingCreateGlobal("error", new Action<object>(o =>
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[ERROR] {o}");
+                Console.ResetColor();
+            }), "void");
         }
 
         public void WorkingCreateGlobal(string name, object value, object typeReturn)
