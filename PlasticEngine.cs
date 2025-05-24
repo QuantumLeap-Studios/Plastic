@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Runtime.InteropServices;
 using System.Text;
 using static Plastic.TypeChecker;
 
@@ -30,7 +32,6 @@ namespace Plastic
             Using
         }
 
-        // Add the missing _builtinFunctions dictionary to resolve the error  
         public static Dictionary<string, TypeChecker.TypeInfo> _builtinFunctions = new()
        {
            { "print", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
@@ -149,7 +150,7 @@ namespace Plastic
 
             var directive = _src.Substring(_start, _current - _start);
 
-            if (directive == "import" || directive == "reference" || directive == "using")
+            if (directive == "import" || directive == "reference" || directive == "using" || directive == "DllImport")
             {
             }
             else
@@ -335,7 +336,7 @@ namespace Plastic
      
     public class Parser
     {
-        private readonly List<Token> _tokens; private int _current = 0;
+        private readonly List<Token> _tokens; public int _current = 0;
         public Parser(List<Token> tokens) { _tokens = tokens; }
         public class OwnershipTracker
         {
@@ -365,15 +366,63 @@ namespace Plastic
 
         public ProgramNode Parse()
         {
+            _current = 0; // Reset the current token position
             var program = new ProgramNode();
-            while (!IsAtEnd()) program.Statements.Add(ParseDeclaration());
+
+            while (!IsAtEnd())
+            {
+                try
+                {
+                    var stmt = ParseDeclaration();
+                    program.Statements.Add(stmt);
+                }
+                catch (Exception ex)
+                {
+                    // Report the error, then synchronize
+                    Console.WriteLine($"Error in Parse: {ex.Message}");
+                    Console.WriteLine($"Current token: {Peek().Type} {Peek().Lexeme}");
+
+                    // Skip tokens until we find a statement boundary
+                    Synchronize();
+                }
+            }
+
             return program;
         }
+
+        private void Synchronize()
+        {
+            Advance();
+
+            while (!IsAtEnd())
+            {
+                if (Previous().Type == TokenType.Semicolon) return;
+
+                switch (Peek().Type)
+                {
+                    case TokenType.Fn:
+                    case TokenType.Let:
+                    case TokenType.If:
+                    case TokenType.While:
+                    case TokenType.For:
+                    case TokenType.Return:
+                    case TokenType.Struct:
+                    case TokenType.Enum:
+                    case TokenType.Trait:
+                    case TokenType.Impl:
+                        return;
+                }
+
+                Advance();
+            }
+        }
+
+
         private Stmt ParseDeclaration()
         {
-            if (Match(TokenType.Import, TokenType.Reference, TokenType.Using))
+            if (Match(TokenType.AtSymbol))
             {
-                return ParseImportStatement();
+                return ParseDllImport();
             }
 
             if (Match(TokenType.Fn)) return ParseFunction("function");
@@ -383,6 +432,17 @@ namespace Plastic
             if (Match(TokenType.Trait)) return ParseTraitDecl();
             if (Match(TokenType.Impl)) return ParseImplDecl();
             return ParseStatement();
+        }
+
+        private Stmt ParseDllImport()
+        {
+            Consume(TokenType.Identifier, "Expect 'DllImport' after '@'.");
+            Consume(TokenType.LParen, "Expect '(' after 'DllImport'.");
+            var dllPath = Consume(TokenType.String, "Expect DLL path as a string.").Literal as string;
+            Consume(TokenType.RParen, "Expect ')' after DLL path.");
+
+            var fnDecl = ParseFunction("DLL function");
+            return new DllImportStmt { DllPath = dllPath, Function = fnDecl };
         }
 
         private Stmt ParseImportStatement()
@@ -582,6 +642,7 @@ namespace Plastic
             Consume(TokenType.RBrace, "Expect '}' after block.");
             return stmts;
         }
+
         private Stmt ParseVarDecl()
         {
             bool isPublic = Match(TokenType.Pub);
@@ -591,6 +652,7 @@ namespace Plastic
             Consume(TokenType.Colon, "Expect ':'.");
             var type = Consume(TokenType.Identifier, "Expect type.").Lexeme;
             Consume(TokenType.Equal, "Expect '='.");
+
             var init = ParseExpression();
             Consume(TokenType.Semicolon, "Expect ';' after var declaration.");
 
@@ -611,8 +673,10 @@ namespace Plastic
             if (Match(TokenType.For)) return ParseFor();
             if (Match(TokenType.Return)) return ParseReturn();
             if (Match(TokenType.LBrace)) return new BlockStmt { Statements = ParseBlock() };
+            if (Match(TokenType.Let)) return ParseVarDecl(); // <-- Add this line
             return ParseExprStmt();
         }
+
         private IfStmt ParseIf()
         {
             Consume(TokenType.LParen, "Expect '('.");
@@ -696,7 +760,24 @@ namespace Plastic
             Consume(TokenType.Semicolon, "Expect ';' after expression.");
             return new ExprStmt { Expression = expr };
         }
-        private Expr ParseExpression() => ParseAssignment();
+        private Expr ParseExpression()
+        {
+            try
+            {
+                return ParseAssignment();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Expression error: {ex.Message}");
+                Console.WriteLine($"At token: {Peek().Type} {Peek().Lexeme}");
+
+                while (!IsAtEnd() && Peek().Type != TokenType.Semicolon)
+                    Advance();
+
+                return new LiteralExpr { Value = "ERROR" };
+            }
+        }
+
 
         private Expr ParseAssignment()
         {
@@ -809,8 +890,14 @@ namespace Plastic
                 Consume(TokenType.RParen, "Expect ')'.");
                 return new GroupingExpr { Expression = expr };
             }
+            // Defensive: error if a statement keyword is found in an expression context
+            if (Check(TokenType.Let) || Check(TokenType.Fn) || Check(TokenType.If) || Check(TokenType.While) || Check(TokenType.For) || Check(TokenType.Return))
+            {
+                throw new Exception($"Unexpected statement keyword '{Peek().Lexeme}' in expression context.");
+            }
             throw new Exception("Expect expression.");
         }
+
         private bool Match(params TokenType[] types)
         {
             foreach (var t in types) if (Check(t)) { Advance(); return true; }
@@ -826,6 +913,11 @@ namespace Plastic
         private bool IsAtEnd() => Peek().Type == TokenType.EOF;
         private Token Peek() => _tokens[_current];
         private Token Previous() => _tokens[_current - 1];
+    }
+    public class DllImportStmt : Stmt
+    {
+        public required string DllPath { get; set; }
+        public required FnDecl Function { get; set; }
     }
 
     public class TypeChecker
@@ -1597,30 +1689,9 @@ namespace Plastic
                             return fnInfo.returnType;
                         }
 
-                        // Replace the long if-else chain in GetExpressionType (CallExpr callee) with:
                         var builtinType = GetBuiltinFunctionType(callee.Name);
                         if (builtinType != null)
                             return builtinType;
-
-                       /* if (callee.Name == "print") return _voidType;
-                        if (callee.Name == "len") return _i32Type;
-                        if (callee.Name == "range") return new TypeInfo("range", false, null, false, false, 0);
-                        if (callee.Name == "toString") return _stringType;
-                        if (callee.Name == "sleep") return _voidType;
-                        if (callee.Name == "input") return _stringType;
-                        if (callee.Name == "parseInt") return _f64Type;
-                        if (callee.Name == "readFile") return _stringType;
-                        if (callee.Name == "writeFile") return _voidType;
-                        if (callee.Name == "appendFile") return _voidType;
-                        if (callee.Name == "deleteFile") return _voidType;
-                        if (callee.Name == "exists") return _boolType;
-                        if (callee.Name == "mkdir") return _voidType;
-                        if (callee.Name == "rmdir") return _voidType;
-                        if (callee.Name == "listDir") return new TypeInfo("List<string>", false, null, false, false, 0); // the fuck do you do?
-                        if (callee.Name == "copyFile") return _voidType;
-                        if (callee.Name == "moveFile") return _voidType;
-                        if (callee.Name == "renameFile") return _voidType;
-                        if (callee.Name == "exit") return _voidType;*/
 
 
                         throw new Exception($"Undefined function: {callee.Name}");
@@ -1711,7 +1782,6 @@ namespace Plastic
         }
         private TypeInfo? GetBuiltinFunctionType(string name)
         {
-            // Use the static dictionary from ImportStmt to look up the type
             if (ImportStmt._builtinFunctions.TryGetValue(name, out var type))
                 return type;
             return null;
@@ -1925,6 +1995,10 @@ namespace Plastic
                     }
                     return null;
 
+                case DllImportStmt dllImport:
+                    RegisterDllFunction(dllImport);
+                    return null;
+
                 case WhileStmt ws:
                     while (IsTruthy(Evaluate(ws.Condition)))
                     {
@@ -1959,6 +2033,43 @@ namespace Plastic
                 default:
                     throw new Exception($"Unsupported statement type: {stmt.GetType().Name}");
             }
+        }
+        private void RegisterDllFunction(DllImportStmt dllImport)
+        {
+            var dllPath = dllImport.DllPath;
+            var functionName = dllImport.Function.Name;
+            var returnType = dllImport.Function.ReturnType;
+            var parameters = dllImport.Function.Params;
+
+            // Create a delegate type dynamically
+            var delegateType = CreateDelegateType(returnType, parameters);
+
+            // Load the DLL and bind the function
+            var handle = NativeLibrary.Load(dllPath);
+            var functionPointer = NativeLibrary.GetExport(handle, functionName);
+            var functionDelegate = Marshal.GetDelegateForFunctionPointer(functionPointer, delegateType);
+
+            // Register the function in the environment
+            _environment.Define(functionName, functionDelegate);
+        }
+
+        private Type CreateDelegateType(string returnType, List<(string, string)> parameters)
+        {
+            var parameterTypes = parameters.Select(p => GetClrType(p.Item2)).ToArray();
+            var returnClrType = GetClrType(returnType);
+
+            return Expression.GetDelegateType(parameterTypes.Concat(new[] { returnClrType }).ToArray());
+        }
+        private Type GetClrType(string plasticType)
+        {
+            return plasticType switch
+            {
+                "void" => typeof(void),
+                "i32" => typeof(int),
+                "f64" => typeof(double),
+                "string" => typeof(string),
+                _ => throw new Exception($"Unsupported type: {plasticType}")
+            };
         }
 
         private object? ExecuteBlock(List<Stmt> statements, Environment environment)
@@ -2344,21 +2455,8 @@ namespace Plastic
                 Console.WriteLine($"\n--- {title} ---");
                 Console.WriteLine(message);
                 Console.Write("Enter Y for Yes or N for No: ");
-
-                while (true)
-                {
-                    var key = Console.ReadKey(true);
-                    if (char.ToUpper(key.KeyChar) == 'Y')
-                    {
-                        Console.WriteLine("Yes");
-                        return true;
-                    }
-                    else if (char.ToUpper(key.KeyChar) == 'N')
-                    {
-                        Console.WriteLine("No");
-                        return false;
-                    }
-                }
+                string y = Console.ReadLine();
+                return y.ToUpper() == "Y";
             }), "bool");
 
             WorkingCreateGlobal("openFile", new Func<string, bool>((fileName) =>
@@ -2465,6 +2563,102 @@ namespace Plastic
                 Console.WriteLine($"[ERROR] {o}");
                 Console.ResetColor();
             }), "void");
+            WorkingCreateGlobal("command", new Func<string, string, int>((command, args) =>
+            {
+                const int pollIntervalMs = 50;
+                try
+                {
+                    var process = new System.Diagnostics.Process();
+                    process.StartInfo.RedirectStandardOutput = true;
+                    process.StartInfo.RedirectStandardError = true;
+                    process.StartInfo.UseShellExecute = false;
+                    process.StartInfo.CreateNoWindow = true;
+
+                    if (OperatingSystem.IsWindows())
+                    {
+                        process.StartInfo.FileName = "cmd.exe";
+                        process.StartInfo.Arguments = $"/c {command} {args}";
+                    }
+                    else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+                    {
+                        process.StartInfo.FileName = "/bin/bash";
+                        process.StartInfo.Arguments = $"-c \"{command.Replace("\"", "\\\"")} {args.Replace("\"", "\\\"")}\"";
+                    }
+                    else
+                    {
+                        throw new PlatformNotSupportedException("Unsupported OS for 'command' builtin, please file an issue.");
+                    }
+
+                    process.OutputDataReceived += (sender, e) => {
+                        if (e.Data != null) Console.WriteLine(e.Data);
+                    };
+                    process.ErrorDataReceived += (sender, e) => {
+                        if (e.Data != null) Console.Error.WriteLine(e.Data);
+                    };
+
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+
+                    while (!process.HasExited)
+                    {
+                        System.Threading.Thread.Sleep(pollIntervalMs);
+                    }
+
+                    return process.ExitCode;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to run command: {ex.Message}");
+                    return -1;
+                }
+            }), "i32");
+
+
+            WorkingCreateGlobal("curl", new Func<string, string, string, string, string>((url, method, data, headers) =>
+            {
+                try
+                {
+                    using var client = new System.Net.Http.HttpClient();
+                    System.Net.Http.HttpRequestMessage request = new System.Net.Http.HttpRequestMessage(
+                        new System.Net.Http.HttpMethod(method.ToUpperInvariant()), url);
+
+                    if (!string.IsNullOrWhiteSpace(headers))
+                    {
+                        foreach (var line in headers.Split('\n'))
+                        {
+                            var idx = line.IndexOf(':');
+                            if (idx > 0)
+                            {
+                                var key = line.Substring(0, idx).Trim();
+                                var value = line.Substring(idx + 1).Trim();
+                                if (!string.IsNullOrEmpty(key))
+                                    request.Headers.TryAddWithoutValidation(key, value);
+                            }
+                        }
+                    }
+
+                    if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(method, "PATCH", StringComparison.OrdinalIgnoreCase))
+                    {
+                        request.Content = new System.Net.Http.StringContent(data ?? "", Encoding.UTF8, "application/json");
+                    }
+                    else if (!string.IsNullOrEmpty(data) && (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) || string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var separator = url.Contains("?") ? "&" : "?";
+                        request.RequestUri = new Uri(url + separator + data);
+                    }
+
+                    var response = client.SendAsync(request).GetAwaiter().GetResult();
+                    response.EnsureSuccessStatusCode();
+                    return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    return $"curl error: {ex.Message}";
+                }
+            }), "string");
         }
 
         public void WorkingCreateGlobal(string name, object value, object typeReturn)
@@ -2490,6 +2684,7 @@ namespace Plastic
                 var tokens = lexer.ScanTokens();
 
                 var parser = new Parser(tokens);
+                parser._current = 0;
                 var program = parser.Parse();
 
                 if (readPlugins)
@@ -2573,44 +2768,63 @@ return 0;
 
     public static class EngineFeatures
     {
-        public static InterpretResult? Interpret(string source, bool debugReturn = false)
+        public class CFunc
+        {
+            public string _name;
+            public string _returnType;
+            public Delegate _function;
+            public PlasticEngine _engine;
+
+            public CFunc(string name, string returnType, Delegate function, PlasticEngine? engine = null)
+            {
+                _name = name;
+                _returnType = returnType;
+                _function = function;
+                if (engine != null)
+                    _engine = engine;
+            }
+
+            public void Register()
+            {
+                if (!ImportStmt._builtinFunctions.ContainsKey(_name))
+                {
+                    ImportStmt._builtinFunctions.Add(_name, new TypeInfo(_returnType, false, null, false, false, 0));
+                }
+                else
+                {
+                    ImportStmt._builtinFunctions[_name] = new TypeInfo(_returnType, false, null, false, false, 0);
+                }
+                _engine.RegisterGlobal(_name, _function);
+            }
+        }
+
+        public static InterpretResult? Interpret(string source, bool logClosed = true, List<CFunc>? functions = null)
         {
             var engine = new PlasticEngine();
-            if (!debugReturn)
+
+            foreach(var func in functions ?? new List<CFunc>())
             {
-                object result = engine.Evaluate(source);
-                if(engine.shouldLeave)
-                {
+                func._engine = engine;
+                func.Register();
+            }
+
+            object result = engine.Evaluate(source);
+            if (engine.shouldLeave)
+            {
+                if(logClosed)
                     Console.WriteLine("Closed.");
-                    return new InterpretResult
-                    {
-                        Result = result,
-                        PlasticEngine = engine
-                    };
-                }
+
                 return new InterpretResult
                 {
                     Result = result,
                     PlasticEngine = engine
                 };
             }
-            else
+            return new InterpretResult
             {
-                var result = engine.Evaluate(source);
-                if (result != null && result.ToString().Length != 0)
-                {
-                    Console.WriteLine($"Result: {result}");
-                }
-                else
-                {
-                    Console.WriteLine("No result.");
-                }
-                return new InterpretResult
-                {
-                    Result = engine.Evaluate(source),
-                    PlasticEngine = engine
-                };
-            }
+                Result = result,
+                PlasticEngine = engine
+            };
         }
 
         public static bool ShouldLeave(PlasticEngine engine)
