@@ -1,5 +1,8 @@
-﻿using System;
+﻿using Plastic.Helpers;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.InteropServices;
@@ -18,7 +21,8 @@ namespace Plastic
         LParen, RParen, LBrace, RBrace, Comma, Semicolon, Arrow,
         Colon, True, False, In,
         Struct, Enum, Trait, Impl, Mut, Pub, Self, Match, As, Dot,
-        AtSymbol, Import, Reference, Using
+        AtSymbol, Import, Reference, Using, DLLImport,
+        Try, Catch, Throw, Finally, AndAnd, OrOr, AndOr, 
     }
     public class ImportStmt : Stmt
     {
@@ -32,28 +36,7 @@ namespace Plastic
             Using
         }
 
-        public static Dictionary<string, TypeChecker.TypeInfo> _builtinFunctions = new()
-       {
-           { "print", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "len", new TypeChecker.TypeInfo("i32", false, null, false, false, 0) },
-           { "range", new TypeChecker.TypeInfo("range", false, null, false, false, 0) },
-           { "sleep", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "input", new TypeChecker.TypeInfo("string", false, null, false, false, 0) },
-           { "parseInt", new TypeChecker.TypeInfo("f64", false, null, false, false, 0) },
-           { "toString", new TypeChecker.TypeInfo("string", false, null, false, false, 0) },
-           { "exit", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "readFile", new TypeChecker.TypeInfo("string", false, null, false, false, 0) },
-           { "writeFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "appendFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "deleteFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "exists", new TypeChecker.TypeInfo("bool", false, null, false, false, 0) },
-           { "mkdir", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "rmdir", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "listDir", new TypeChecker.TypeInfo("List<string>", false, null, false, false, 0) },
-           { "copyFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "moveFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) },
-           { "renameFile", new TypeChecker.TypeInfo("void", false, null, false, false, 0) }
-       };
+        public static Dictionary<string, TypeChecker.TypeInfo> _builtinFunctions = new();
     }
 
     public class Token
@@ -82,7 +65,11 @@ namespace Plastic
             {"trait", TokenType.Trait}, {"impl", TokenType.Impl}, {"mut", TokenType.Mut},
             {"pub", TokenType.Pub}, {"self", TokenType.Self}, {"match", TokenType.Match},
             {"as", TokenType.As},
-            {"import", TokenType.Import}, {"reference", TokenType.Reference}, {"using", TokenType.Using}
+            {"import", TokenType.Import}, {"reference", TokenType.Reference}, {"using", TokenType.Using}, {"dllimport", TokenType.DLLImport},
+            {"try", TokenType.Try},
+            {"catch", TokenType.Catch},
+            {"throw", TokenType.Throw},
+            {"finally", TokenType.Finally}
         };
         public Lexer(string src) { _src = src; }
         public List<Token> ScanTokens()
@@ -132,6 +119,20 @@ namespace Plastic
                 case '\t': break;
                 case '\n': _line++; break;
                 case '"': String(); break;
+                case '&':
+                    if (Match('&'))
+                        AddToken(TokenType.AndAnd);
+                    else if (Match('|'))
+                        AddToken(TokenType.AndOr);
+                    else
+                        throw new Exception($"Unexpected char: {c} at line {_line}");
+                    break;
+                case '|':
+                    if (Match('|'))
+                        AddToken(TokenType.OrOr);
+                    else
+                        throw new Exception($"Unexpected char: {c} at line {_line}");
+                    break;
                 default:
                     if (IsDigit(c)) { Number(); }
                     else if (IsAlpha(c)) { Identifier(); }
@@ -140,24 +141,6 @@ namespace Plastic
                         throw new Exception($"Unexpected char: {c} at line {_line}");
                     }
                     break;
-            }
-        }
-        private void ScanDirective()
-        {
-            while (char.IsWhiteSpace(Peek()) && !IsAtEnd()) Advance();
-
-            _start = _current;
-
-            while (IsAlpha(Peek())) Advance();
-
-            var directive = _src.Substring(_start, _current - _start);
-
-            if (directive == "import" || directive == "reference" || directive == "using" || directive == "DllImport")
-            {
-            }
-            else
-            {
-                throw new Exception($"Unknown directive '@{directive}' at line {_line}");
             }
         }
         private void Identifier()
@@ -213,12 +196,37 @@ namespace Plastic
     }
 
     public abstract class AstNode { }
-    public class ProgramNode : AstNode
-    {
-        public List<Stmt> Statements { get; } = new();
-    }
+    public class ProgramNode : AstNode { public List<Stmt> Statements { get; } = new(); }
     public abstract class Stmt : AstNode { }
     public abstract class Expr : AstNode { }
+
+    public class PlasticException : Exception
+    {
+        public object? Value { get; }
+        public PlasticException(object? value) : base(value?.ToString() ?? "")
+        {
+            Value = value;
+        }
+    }
+
+
+    public class TryStmt : Stmt
+    {
+        public required List<Stmt> Body;
+        public required List<CatchStmt> Catches;
+        public List<Stmt>? Finally;
+    }
+
+    public class CatchStmt : Stmt
+    {
+        public required string ExceptionVariable;
+        public required List<Stmt> Body;
+    }
+
+    public class ThrowStmt : Stmt
+    {
+        public required Expr Expression;
+    }
 
     public class FnDecl : Stmt
     {
@@ -289,11 +297,12 @@ namespace Plastic
     }
     public class ForStmt : Stmt
     {
-        public required string Var;
-        public required Expr Start;
-        public required Expr End;
-        public required List<Stmt> Body;
+        public required string Var;         // Loop variable name
+        public required Expr Start;         // Range start
+        public required Expr End;           // Range end
+        public required List<Stmt> Body;    // Loop body
     }
+
     public class ReturnStmt : Stmt
     {
         public Expr? Value;
@@ -420,7 +429,7 @@ namespace Plastic
 
         private Stmt ParseDeclaration()
         {
-            if (Match(TokenType.AtSymbol))
+            if (Match(TokenType.DLLImport))
             {
                 return ParseDllImport();
             }
@@ -436,9 +445,47 @@ namespace Plastic
             if (Match(TokenType.Enum)) return ParseEnumDecl();
             if (Match(TokenType.Trait)) return ParseTraitDecl();
             if (Match(TokenType.Impl)) return ParseImplDecl();
+            if (Match(TokenType.Try)) return ParseTry();
+            if (Match(TokenType.Throw)) return ParseThrow();
             return ParseStatement();
         }
 
+
+
+        private Stmt ParseTry()
+        {
+            var body = new List<Stmt>();
+            Consume(TokenType.LBrace, "Expect '{' after 'try'");
+            body = ParseBlock();
+
+            var catches = new List<CatchStmt>();
+            while (Match(TokenType.Catch))
+            {
+                Consume(TokenType.LParen, "Expect '(' after 'catch'");
+                var exceptionVar = Consume(TokenType.Identifier, "Expect exception variable name").Lexeme;
+                Consume(TokenType.RParen, "Expect ')' after catch variable");
+
+                Consume(TokenType.LBrace, "Expect '{' after catch declaration");
+                var catchBody = ParseBlock();
+                catches.Add(new CatchStmt { ExceptionVariable = exceptionVar, Body = catchBody });
+            }
+
+            List<Stmt>? finallyBlock = null;
+            if (Match(TokenType.Finally))
+            {
+                Consume(TokenType.LBrace, "Expect '{' after 'finally'");
+                finallyBlock = ParseBlock();
+            }
+
+            return new TryStmt { Body = body, Catches = catches, Finally = finallyBlock };
+        }
+
+        private Stmt ParseThrow()
+        {
+            var expr = ParseExpression();
+            Consume(TokenType.Semicolon, "Expect ';' after throw expression");
+            return new ThrowStmt { Expression = expr };
+        }
         private Stmt ParseDllImport()
         {
             Consume(TokenType.Identifier, "Expect 'DllImport' after '@'.");
@@ -486,40 +533,6 @@ namespace Plastic
             Consume(TokenType.Semicolon, "Expect ';' after import statement");
 
             return new ImportStmt { PackageName = packageName, Type = importType };
-        }
-
-
-
-        private Expr ParseFieldAccess()
-        {
-            var expr = ParseCall();
-
-            while (Match(TokenType.Dot))
-            {
-                var name = Consume(TokenType.Identifier, "Expect field name after '.'.").Lexeme;
-                expr = new FieldAccessExpr { Object = expr, FieldName = name };
-            }
-
-            return expr;
-        }
-
-        private Expr ParseMatch()
-        {
-            var value = ParseExpression();
-            Consume(TokenType.LBrace, "Expect '{' after match value.");
-
-            var arms = new List<(Expr, Expr)>();
-            while (!Check(TokenType.RBrace) && !IsAtEnd())
-            {
-                var pattern = ParseExpression();
-                Consume(TokenType.Arrow, "Expect '=>' after match pattern.");
-                var result = ParseExpression();
-                Consume(TokenType.Comma, "Expect ',' after match arm.");
-                arms.Add((pattern, result));
-            }
-
-            Consume(TokenType.RBrace, "Expect '}' after match arms.");
-            return new MatchExpr { Value = value, Arms = arms };
         }
 
         private Stmt ParseStructDecl()
@@ -612,6 +625,37 @@ namespace Plastic
             Consume(TokenType.RBrace, "Expect '}' after impl methods.");
             return new ImplDecl { TypeName = typeName, TraitName = traitName, Methods = methods };
         }
+        private string ParseFunctionType()
+        {
+            Consume(TokenType.Fn, "Expect 'fn' keyword in function type");
+            Consume(TokenType.LParen, "Expect '(' in function type");
+
+            var paramTypes = new List<string>();
+            if (!Check(TokenType.RParen))
+            {
+                do
+                {
+                    if (Check(TokenType.Identifier))
+                    {
+                        var paramName = Advance().Lexeme; // get parameter name
+                        Consume(TokenType.Colon, "Expect ':' after parameter name in function type");
+                        var typeName = Consume(TokenType.Identifier, "Expect parameter type in function type").Lexeme;
+                        paramTypes.Add($"{paramName}: {typeName}");
+                    }
+                    else
+                    {
+                        var typeName = Consume(TokenType.Identifier, "Expect parameter type in function type").Lexeme;
+                        paramTypes.Add(typeName);
+                    }
+                } while (Match(TokenType.Comma));
+            }
+
+            Consume(TokenType.RParen, "Expect ')' in function type");
+            Consume(TokenType.Arrow, "Expect '->' in function type");
+            var returnType = Consume(TokenType.Identifier, "Expect return type in function type").Lexeme;
+
+            return $"fn({string.Join(", ", paramTypes)}) -> {returnType}";
+        }
 
         private FnDecl ParseFunction(string kind)
         {
@@ -619,7 +663,7 @@ namespace Plastic
             {
                 Name = Consume(TokenType.Identifier, $"Expect {kind} name.").Lexeme,
                 Params = new(),
-                ReturnType = string.Empty,        
+                ReturnType = string.Empty,
                 Body = new()
             };
 
@@ -631,10 +675,50 @@ namespace Plastic
                 {
                     var name = Consume(TokenType.Identifier, "Expect param name.").Lexeme;
                     Consume(TokenType.Colon, "Expect ':'.");
-                    var type = Consume(TokenType.Identifier, "Expect type name.").Lexeme;
+
+                    // Check if the parameter type is a function type
+                    string type;
+                    if (Check(TokenType.Fn))
+                    {
+                        type = ParseFunctionType();
+                    }
+                    else
+                    {
+                        type = Consume(TokenType.Identifier, "Expect type name.").Lexeme;
+                    }
+
                     fn.Params.Add((name, type));
                 } while (Match(TokenType.Comma));
             }
+            if (Check(TokenType.Fn))
+            {
+                Advance(); // Consume 'fn'
+                Consume(TokenType.LParen, "Expect '(' after 'fn'.");
+                var paramList = new List<(string, string)>();
+                if (!Check(TokenType.RParen))
+                {
+                    do
+                    {
+                        var paramName = Consume(TokenType.Identifier, "Expect parameter name.").Lexeme;
+                        Consume(TokenType.Colon, "Expect ':' after parameter name.");
+                        var paramType = Consume(TokenType.Identifier, "Expect parameter type.").Lexeme;
+                        paramList.Add((paramName, paramType));
+                    } while (Match(TokenType.Comma));
+                }
+                Consume(TokenType.RParen, "Expect ')' after function parameters.");
+                Consume(TokenType.Arrow, "Expect '->' after function parameters.");
+                var returnType = Consume(TokenType.Identifier, "Expect return type.").Lexeme;
+
+                // Create and return a FnDecl object instead of a string
+                return new FnDecl
+                {
+                    Name = "functype", // Function type doesn't need a specific name
+                    Params = paramList,
+                    ReturnType = returnType,
+                    Body = new List<Stmt>()
+                };
+            }
+
             Consume(TokenType.RParen, "Expect ')'.");
             Consume(TokenType.Arrow, "Expect '->'.");
             fn.ReturnType = Consume(TokenType.Identifier, "Expect return type.").Lexeme;
@@ -733,28 +817,46 @@ namespace Plastic
 
             return new WhileStmt { Condition = cond, Body = body };
         }
-        private ForStmt ParseFor()
+        private Stmt ParseFor()
         {
-            Consume(TokenType.LParen, "Expect '(' after 'for'.");
-            var varName = Consume(TokenType.Identifier, "Expect variable name.").Lexeme;
-            Consume(TokenType.In, "Expect 'in' after variable name.");
-            var start = ParseExpression();
-            Consume(TokenType.Comma, "Expect ',' after start expression.");
-            var end = ParseExpression();
-            Consume(TokenType.RParen, "Expect ')' after clauses.");
-
-            var body = new List<Stmt>();
-            if (Match(TokenType.LBrace))
+            try
             {
-                body = ParseBlock();
-            }
-            else
-            {
-                body.Add(ParseStatement());
-            }
+                // For statement structure: for <identifier> in <expr>, <expr> { <body> }
+                Consume(TokenType.LParen, "Expect '(' after 'for'.");
+                var varName = Consume(TokenType.Identifier, "Expect variable name.").Lexeme;
 
-            return new ForStmt { Var = varName, Start = start, End = end, Body = body };
+                Consume(TokenType.In, "Expect 'in' after variable name.");
+                var start = ParseExpression();
+
+                Consume(TokenType.Comma, "Expect ',' after start expression.");
+                var end = ParseExpression();
+
+                Consume(TokenType.RParen, "Expect ')' after range.");
+
+                List<Stmt> body;
+                if (Match(TokenType.LBrace))
+                {
+                    body = ParseBlock();
+                }
+                else
+                {
+                    body = new List<Stmt> { ParseStatement() };
+                }
+
+                return new ForStmt
+                {
+                    Var = varName,
+                    Start = start,
+                    End = end,
+                    Body = body
+                };
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error parsing for loop: {ex.Message}");
+            }
         }
+
         private ReturnStmt ParseReturn()
         {
             var value = !Check(TokenType.Semicolon) ? ParseExpression() : null;
@@ -767,6 +869,7 @@ namespace Plastic
             Consume(TokenType.Semicolon, "Expect ';' after expression.");
             return new ExprStmt { Expression = expr };
         }
+
         private Expr ParseExpression()
         {
             try
@@ -788,7 +891,7 @@ namespace Plastic
 
         private Expr ParseAssignment()
         {
-            var expr = ParseEquality();
+            var expr = ParseLogical(); 
 
             if (Match(TokenType.Equal))
             {
@@ -797,7 +900,6 @@ namespace Plastic
                 if (expr is VariableExpr ve)
                 {
                     var op = Previous();
-                    Console.WriteLine($"DEBUG: Assignment operator token: {op.Type} {op.Lexeme}");
                     return new BinaryExpr
                     {
                         Left = expr,
@@ -811,15 +913,31 @@ namespace Plastic
 
             return expr;
         }
+        private Expr ParseLogical()
+        {
+            var expr = ParseEquality();
+
+            while (Match(TokenType.AndAnd, TokenType.OrOr, TokenType.AndOr))
+            {
+                var op = Previous();
+                var right = ParseEquality(); // Call ParseEquality directly
+                expr = new BinaryExpr { Left = expr, Op = op, Right = right };
+            }
+
+            return expr;
+        }
 
         private Expr ParseEquality()
         {
             var expr = ParseComparison();
+
             while (Match(TokenType.BangEqual, TokenType.EqualEqual))
             {
-                var op = Previous(); var right = ParseComparison();
+                var op = Previous();
+                var right = ParseComparison();
                 expr = new BinaryExpr { Left = expr, Op = op, Right = right };
             }
+
             return expr;
         }
         private Expr ParseComparison()
@@ -902,6 +1020,11 @@ namespace Plastic
                 ImportStmt stmt = (ImportStmt)ParseImportStatement();
                 return new LiteralExpr { Value = "" };
             }
+            if(Match(TokenType.DLLImport))
+            {
+                DllImportStmt dllImportStmt = (DllImportStmt)ParseDllImport();
+                return new LiteralExpr { Value = "" };
+            }
             if (Check(TokenType.Let) || Check(TokenType.Fn) || Check(TokenType.If) || Check(TokenType.While) || Check(TokenType.For) || Check(TokenType.Return))
             {
                 throw new Exception($"Unexpected statement keyword '{Peek().Lexeme}' in expression context.");
@@ -960,7 +1083,6 @@ namespace Plastic
         private TypeInfo? _currentReturnType = null;
 
         private static readonly TypeInfo _boolType = new("bool", false, null, false, false, 0);
-        private static readonly TypeInfo _voidType = new("void", false, null, false, false, 0);
         private static readonly TypeInfo _i32Type = new("i32", false, null, false, false, 0);
         private static readonly TypeInfo _f64Type = new("f64", false, null, false, false, 0);
         private static readonly TypeInfo _stringType = new("string", false, null, false, false, 0);
@@ -1551,11 +1673,14 @@ namespace Plastic
                 case LiteralExpr lit:
                     return lit.Value switch
                     {
-                        double => _f64Type,
+                        int => _i32Type,
+                        long => new TypeInfo("i64", false, null, false, false, 0),
+                        double or float => _f64Type, 
                         bool => _boolType,
                         string => _stringType,
                         _ => _anyType
                     };
+
 
                 case VariableExpr ve:
                     if (_variables.TryGetValue(ve.Name, out var varInfo))
@@ -1623,6 +1748,13 @@ namespace Plastic
                         case TokenType.LessEqual:
                             return _boolType;
 
+                        case TokenType.AndAnd:
+                            return _boolType;
+                        case TokenType.AndOr:
+                            return _boolType;
+                        case TokenType.OrOr:
+                            return _boolType;
+
                         case TokenType.Equal:
                             if (!AreTypesCompatible(leftType.Type, rightType.Type))
                             {
@@ -1645,7 +1777,7 @@ namespace Plastic
                             return leftType;
 
                         default:
-                            throw new Exception($"Unsupported binary operator: {be.Op.Lexeme}");
+                            throw new Exception($"Unsupported binary operator: {be.Op.Lexeme} @ get");
                     }
 
                 case UnaryExpr ue:
@@ -1788,7 +1920,7 @@ namespace Plastic
                     return GetExpressionType(ge.Expression, movedVars);
 
                 default:
-                    throw new Exception($"Unsupported expression type: {expr.GetType().Name}");
+                    throw new Exception($"Unsupported expression type: {expr.GetType().Name} @ get");
             }
         }
         private TypeInfo? GetBuiltinFunctionType(string name)
@@ -1799,10 +1931,17 @@ namespace Plastic
         }
         private bool IsValidType(string type)
         {
-            return type == "i32" || type == "f64" || type == "bool" || type == "string" ||
-                   type == "void" || type == "i64" || type == "f32" || type == "any" ||
-                   type.StartsWith("&mut ") || type.StartsWith("&");
+            if (type == "i32" || type == "f64" || type == "bool" || type == "string" ||
+                type == "void" || type == "i64" || type == "f32" || type == "any" ||
+                type.StartsWith("&mut ") || type.StartsWith("&") ||
+                type.StartsWith("fn(") && type.Contains("->"))
+            {
+                return true;
+            }
+
+            return _userTypes.ContainsKey(type);
         }
+
 
         private bool IsNumericType(string type)
         {
@@ -1811,6 +1950,7 @@ namespace Plastic
 
         private TypeInfo CombineNumericTypes(string type1, string type2)
         {
+            // Promote to the highest precision type
             if (type1 == "f64" || type2 == "f64") return _f64Type;
             if (type1 == "f32" || type2 == "f32") return new TypeInfo("f32", false, null, false, false, 0);
             if (type1 == "i64" || type2 == "i64") return new TypeInfo("i64", false, null, false, false, 0);
@@ -1859,7 +1999,7 @@ namespace Plastic
 
         public int getLine()
         {
-            return _currentLifetime;
+            return 0;
         }
     }
 
@@ -2006,6 +2146,45 @@ namespace Plastic
                     }
                     return null;
 
+                case ThrowStmt ts:
+                    var throwValue = Evaluate(ts.Expression);
+                    throw new PlasticException(throwValue);
+
+                case TryStmt tryStmt:
+                    try
+                    {
+                        ExecuteBlock(tryStmt.Body, new Environment(_environment));
+                    }
+                    catch (Exception ex)
+                    {
+                        bool handled = false;
+                        foreach (var catch_ in tryStmt.Catches)
+                        {
+                            var catchEnv = new Environment(_environment);
+                            catchEnv.Define(catch_.ExceptionVariable, ex.Message);
+                            try
+                            {
+                                ExecuteBlock(catch_.Body, catchEnv);
+                                handled = true;
+                                break;
+                            }
+                            catch
+                            {
+                                // If this catch block throws, try next catch block
+                                continue;
+                            }
+                        }
+                        if (!handled) throw;
+                    }
+                    finally
+                    {
+                        if (tryStmt.Finally != null)
+                        {
+                            ExecuteBlock(tryStmt.Finally, new Environment(_environment));
+                        }
+                    }
+                    return null;
+
                 case DllImportStmt dllImport:
                     RegisterDllFunction(dllImport);
                     return null;
@@ -2013,30 +2192,48 @@ namespace Plastic
                 case WhileStmt ws:
                     while (IsTruthy(Evaluate(ws.Condition)))
                     {
-                        ExecuteBlock(ws.Body, _environment);
+                        var whileEnv = new Environment(_environment);
+                        ExecuteBlock(ws.Body, whileEnv);
                     }
                     return null;
 
                 case ForStmt fs:
-                    var start = Convert.ToInt32(Evaluate(fs.Start));
-                    var end = Convert.ToInt32(Evaluate(fs.End));
-
-                    var previous = _environment;
                     try
                     {
-                        _environment = new Environment(_environment);
+                        var start = Convert.ToInt32(Evaluate(fs.Start));
+                        var end = Convert.ToInt32(Evaluate(fs.End));
+                        var buffer = new StringBuilder(); 
 
                         for (int i = start; i <= end; i++)
                         {
                             _environment.Define(fs.Var, i);
-                            ExecuteBlock(fs.Body, _environment);
+                            foreach (var stmt2 in fs.Body)
+                            {
+                                if (stmt2 is ExprStmt exprStmt && exprStmt.Expression is CallExpr callExpr &&
+                                    callExpr.Callee is VariableExpr callee && callee.Name == "print")
+                                {
+                                    var argument = Evaluate(callExpr.Arguments[0]);
+                                    buffer.AppendLine(argument?.ToString());
+                                }
+                                else
+                                {
+                                    ExecuteStmt(stmt2);
+                                }
+                            }
                         }
+
+                        if (buffer.Length > 0)
+                        {
+                            Console.Write(buffer.ToString());
+                        }
+
+                        return null;
                     }
-                    finally
+                    catch (Exception ex)
                     {
-                        _environment = previous;
+                        throw new Exception($"Error executing for loop: {ex.Message}");
                     }
-                    return null;
+
 
                 case BlockStmt bs:
                     return ExecuteBlock(bs.Statements, new Environment(_environment));
@@ -2173,6 +2370,7 @@ namespace Plastic
         {
             return op.Type switch
             {
+                // standard plus
                 TokenType.Plus => (left, right) switch
                 {
                     (double l, double r) => l + r,
@@ -2181,20 +2379,35 @@ namespace Plastic
                     (_, string r) => left?.ToString() + r,
                     _ => throw new Exception("Operands must be two numbers or two strings.")
                 },
+
+                // alias “added” → plus
+                TokenType.Identifier when op.Lexeme == "added" => (left, right) switch
+                {
+                    (double l, double r) => l + r,
+                    _ => throw new Exception("‘added’ operator only works on numbers.")
+                },
+
                 TokenType.Minus => (double)left - (double)right,
                 TokenType.Star => (double)left * (double)right,
                 TokenType.Slash => (double)right == 0
-                    ? throw new Exception("Division by zero.")
-                    : (double)left / (double)right,
+                                            ? throw new Exception("Division by zero.")
+                                            : (double)left / (double)right,
                 TokenType.Percent => (double)right == 0
-                    ? throw new Exception("Modulo by zero.")
-                    : (double)left % (double)right,
+                                            ? throw new Exception("Modulo by zero.")
+                                            : (double)left % (double)right,
                 TokenType.Greater => (double)left > (double)right,
                 TokenType.GreaterEqual => (double)left >= (double)right,
                 TokenType.Less => (double)left < (double)right,
                 TokenType.LessEqual => (double)left <= (double)right,
                 TokenType.EqualEqual => IsEqual(left, right),
                 TokenType.BangEqual => !IsEqual(left, right),
+                TokenType.AndAnd => IsTruthy(left) && IsTruthy(right),
+                TokenType.OrOr => IsTruthy(left) || IsTruthy(right),
+                TokenType.AndOr => IsTruthy(left) && !IsTruthy(right),
+
+                // comma operator returns left (so “for(i in 0,5)” can parse 0,5 without error)
+                TokenType.Comma => left,
+
                 _ => throw new Exception($"Unsupported binary operator: {op.Lexeme}")
             };
         }
@@ -2239,12 +2452,6 @@ namespace Plastic
         {
             if (operand is double) return;
             throw new Exception($"Operand must be a number for operator '{op.Lexeme}'.");
-        }
-
-        private void CheckNumberOperands(Token op, object? left, object? right)
-        {
-            if (left is double && right is double) return;
-            throw new Exception($"Operands must be numbers for operator '{op.Lexeme}'.");
         }
     }
 
@@ -2306,7 +2513,7 @@ namespace Plastic
         }
         private string ResolvePackagePath(string packageName)
         {
-            if (packageName.Contains(Path.DirectorySeparatorChar) || packageName.Contains('/'))
+            if (packageName.Contains(Path.DirectorySeparatorChar) || packageName.Contains('/') || packageName.Contains("-="))
             {
                 var basePath = System.Environment.CurrentDirectory;
                 var fullPath = Path.Combine(basePath, packageName);
@@ -2375,9 +2582,62 @@ namespace Plastic
             return null;
         }
 
+        // kinda messy, mb
+        BlockingCollection<string> channel = new BlockingCollection<string>();
+        private static readonly BlockingCollection<object> _printOpQueue = new();
+        private static Thread? _printOpThread;
+        private static bool _printOpThreadRunning = false;
+
+        string _lastHttpRequestData = "";
+        string _lastHttpRequestMethod = "";
+        string _lastHttpRequestPath = "";
+        string _lastHttpRequestResponse = "";
+        System.Net.HttpListenerContext? _lastHttpContext = null;
+        object _httpLock = new();
+
+        private static void StartPrintOpThread()
+        {
+            if (_printOpThreadRunning) return;
+            _printOpThreadRunning = true;
+            _printOpThread = new Thread(() =>
+            {
+                foreach (var o in _printOpQueue.GetConsumingEnumerable())
+                {
+                    if (o is IEnumerable<object> enumerable)
+                    {
+                        Console.WriteLine(string.Join(" ", enumerable));
+                    }
+                    else
+                    {
+                        Console.WriteLine(o);
+                    }
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "print thread"
+            };
+            _printOpThread.Start();
+        }
+
         private void RegisterBuiltins()
         {
-            WorkingCreateGlobal("print", new Action<object>(o => Console.WriteLine(o)), "void");
+            WorkingCreateGlobal("print", new Action<object>(o =>
+            {
+                if (o is IEnumerable<object> enumerable)
+                {
+                    Console.WriteLine(string.Join(" ", enumerable));
+                }
+                else
+                {
+                    Console.WriteLine(o);
+                }
+            }), "void");
+            WorkingCreateGlobal("print_op", new Action<object>(o =>
+            {
+                StartPrintOpThread();
+                _printOpQueue.Add(o);
+            }), "void");
             WorkingCreateGlobal("len", new Func<string, int>(s => s.Length), "i32");
             WorkingCreateGlobal("range", new Func<double, double, object>((start, end) => new { Start = start, End = end }), "range");
             WorkingCreateGlobal("sleep", new Action<double>(ms => System.Threading.Thread.Sleep((int)ms)), "void");
@@ -2480,7 +2740,6 @@ namespace Plastic
                     throw new Exception($"File '{oldName}' not found.");
                 }
             }), "void");
-
             WorkingCreateGlobal("showErrorBox", new Action<string>((message) =>
             {
                 Console.ForegroundColor = ConsoleColor.Red;
@@ -2490,7 +2749,6 @@ namespace Plastic
                 Console.WriteLine("Press any key to continue...");
                 Console.ReadKey(true);
             }), "void");
-
             WorkingCreateGlobal("showConfirmBox", new Func<string, string, bool>((message, title) =>
             {
                 Console.WriteLine($"\n--- {title} ---");
@@ -2499,7 +2757,6 @@ namespace Plastic
                 string y = Console.ReadLine();
                 return y.ToUpper() == "Y";
             }), "bool");
-
             WorkingCreateGlobal("openFile", new Func<string, bool>((fileName) =>
             {
                 try
@@ -2515,7 +2772,6 @@ namespace Plastic
                     return false;
                 }
             }), "bool");
-
             WorkingCreateGlobal("runProcess", new Func<string, string, bool>((fileName, args) =>
             {
                 try
@@ -2531,7 +2787,6 @@ namespace Plastic
                     return false;
                 }
             }), "bool");
-
             WorkingCreateGlobal("runProcessAndWait", new Func<string, string, int>((fileName, args) =>
             {
                 try
@@ -2549,7 +2804,6 @@ namespace Plastic
                     return -1;
                 }
             }), "i32");
-
             WorkingCreateGlobal("openFileDialog", new Func<string, string, string>((title, filter) =>
             {
                 Console.WriteLine($"\n--- {title} ---");
@@ -2557,7 +2811,6 @@ namespace Plastic
                 Console.Write("Please enter the full path to the file: ");
                 return Console.ReadLine() ?? string.Empty;
             }), "string");
-
             WorkingCreateGlobal("saveFileDialog", new Func<string, string, string>((title, filter) =>
             {
                 Console.WriteLine($"\n--- {title} ---");
@@ -2565,7 +2818,6 @@ namespace Plastic
                 Console.Write("Please enter the full path where to save the file: ");
                 return Console.ReadLine() ?? string.Empty;
             }), "string");
-
             WorkingCreateGlobal("breakPoint", new Action(() => Console.WriteLine($"breakpoint hit! Line: {checker.getLine()}")), "void");
             WorkingCreateGlobal("now", new Func<string>(() => DateTime.Now.ToString("o")), "string");
             WorkingCreateGlobal("timestamp", new Func<long>(() => DateTimeOffset.UtcNow.ToUnixTimeSeconds()), "i64");
@@ -2654,8 +2906,6 @@ namespace Plastic
                     return -1;
                 }
             }), "i32");
-
-
             WorkingCreateGlobal("curl", new Func<string, string, string, string, string>((url, method, data, headers) =>
             {
                 try
@@ -2700,12 +2950,224 @@ namespace Plastic
                     return $"curl error: {ex.Message}";
                 }
             }), "string");
-
             WorkingCreateGlobal("LoadString", new Func<string, string>((source) =>
             {
                 var engine = new PlasticEngine();
                 return engine.Evaluate(source, false)?.ToString() ?? "";
             }), "string");
+            WorkingCreateGlobal("ParseJSON", new Func<string, object>((json) =>
+            {
+                try
+                {
+                    return Helpers.JSONSerializer<object>.DeSerialize(json);
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception($"Failed to parse JSON: {ex.Message}");
+                }
+            }), "string");
+            WorkingCreateGlobal("SerializeJSON", new Func<object, string>((obj) =>
+            {
+                try
+                {
+                    return Helpers.JSONSerializer<object>.Serialize(obj);
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception($"Failed to serialize to JSON: {ex.Message}");
+                }
+            }), "string");
+            WorkingCreateGlobal("CreateNewThread", new Func<string, string, object>((source, input) =>
+            {
+                var engine = new PlasticEngine();
+                var thread = new System.Threading.Thread(() =>
+                {
+                    try
+                    {
+                        string fileName = null;
+                        var args = System.Environment.GetCommandLineArgs();
+                        if (string.IsNullOrEmpty(fileName))
+                            fileName = source;
+
+                        if (!string.IsNullOrEmpty(fileName) && File.Exists(fileName))
+                        {
+                            string fileSource = File.ReadAllText(fileName);
+                            var lexer = new Lexer(fileSource);
+                            var tokens = lexer.ScanTokens();
+                            var parser = new Parser(tokens);
+                            var packageProgram = parser.Parse();
+
+                            engine._packages["newThreadParentedEngine"] = packageProgram;
+                            engine.Evaluate(input, false);
+                        }
+                        else
+                        {
+                            engine.Evaluate(input, false);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Thread error: {ex.Message}");
+                    }
+                });
+                thread.Start();
+                return thread.ManagedThreadId.ToString();
+            }), "string");
+            WorkingCreateGlobal("GenerateUUID", new Func<string>(() => Guid.NewGuid().ToString()), "string");
+            WorkingCreateGlobal("GetCurrentDirectory", new Func<string>(() => System.Environment.CurrentDirectory), "string");
+            WorkingCreateGlobal("ConvertToBinary", new Func<string, string>((b) => BMAM.ToBinary(b)), "string");
+            WorkingCreateGlobal("BinaryToConvert", new Func<string, string>((b) => BMAM.FromBinary(b)), "string");
+            WorkingCreateGlobal("ConvertToMorse", new Func<string, string>((b) => BMAM.ToMorse(b)), "string");
+            WorkingCreateGlobal("MorseToConvert", new Func<string, string>((b) => BMAM.DecodeMorse(b)), "string");
+            WorkingCreateGlobal("Hash", new Func<string, string>((b) => BMAM.HashText(b)), "string");
+            WorkingCreateGlobal("VerifyHash", new Func<string, string, bool>((b, a) => BMAM.VerifyHash(b, a)), "bool");
+            WorkingCreateGlobal("array", new Func<int, object[]>(size => new object[size]), "array");
+            WorkingCreateGlobal("map", new Func<object>(() => new Dictionary<string, object>()), "map");
+            WorkingCreateGlobal("list", new Func<object>(() => new List<object>()), "list");
+            WorkingCreateGlobal("random", new Func<double>(() => new Random().NextDouble()), "f64");
+            WorkingCreateGlobal("time", new Func<long>(() => DateTimeOffset.Now.ToUnixTimeMilliseconds()), "i64");
+            WorkingCreateGlobal("parseFloat", new Func<string, double>(s => double.Parse(s)), "f64");
+            WorkingCreateGlobal("CollectGarbage", new Func<bool>(() =>
+            {
+                try
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Garbage collection error: {ex.Message}");
+                    return false;
+                }
+            }), "bool");
+            WorkingCreateGlobal("GetCurrentProcessId", new Func<int>(() =>
+            {
+                return System.Diagnostics.Process.GetCurrentProcess().Id;
+            }), "i32");
+            WorkingCreateGlobal("GetEnvironmentVariable", new Func<string, string>((key) =>
+            {
+                return System.Environment.GetEnvironmentVariable(key) ?? string.Empty;
+            }), "string");
+            WorkingCreateGlobal("GetCallerFileName", new Func<string>(() =>
+            {
+                var stackTrace = new System.Diagnostics.StackTrace();
+                var frame = stackTrace.GetFrame(1);
+                if (frame != null)
+                {
+                    return frame.GetFileName() ?? "Unknown file";
+                }
+                return "Unknown file";
+            }), "string");
+            WorkingCreateGlobal("extensiveError", new Action(() => { Console.ForegroundColor = ConsoleColor.Red;
+                for (int i = 0; i < 10; i++) { Console.WriteLine("extensiveError Called"); }
+                Console.ResetColor();
+                Console.ForegroundColor = ConsoleColor.White;
+                Thread.Sleep(50);
+                shouldLeave = true;
+            }), "void");
+            WorkingCreateGlobal("startHttpServer", new Func<string, bool>((port) =>
+            {
+                try
+                {
+                    var listener = new System.Net.HttpListener();
+                    listener.Prefixes.Add($"http://*:{port}/");
+                    listener.Start();
+
+                    var thread = new Thread(() =>
+                    {
+                        while (listener.IsListening)
+                        {
+                            try
+                            {
+                                var context = listener.GetContext();
+                                var request = context.Request;
+                                var response = context.Response;
+
+                                string method = request.HttpMethod;
+                                string path = request.Url.AbsolutePath;
+                                string body = new StreamReader(request.InputStream).ReadToEnd();
+
+                                lock (_httpLock)
+                                {
+                                    _lastHttpRequestMethod = method;
+                                    _lastHttpRequestPath = path;
+                                    _lastHttpRequestData = body;
+                                    _lastHttpRequestResponse = "";
+                                    _lastHttpContext = context;
+                                }
+
+                                int waitMs = 0;
+                                while (true)
+                                {
+                                    lock (_httpLock)
+                                    {
+                                        if (!string.IsNullOrEmpty(_lastHttpRequestResponse))
+                                            break;
+                                    }
+                                    Thread.Sleep(10);
+                                    waitMs += 10;
+                                    if (waitMs > 10000) // 10 seconds timeout
+                                    {
+                                        lock (_httpLock)
+                                        {
+                                            _lastHttpRequestResponse = "Timeout waiting for response.";
+                                        }
+                                        break;
+                                    }
+                                }
+
+                                string responseContent;
+                                lock (_httpLock)
+                                {
+                                    responseContent = _lastHttpRequestResponse;
+                                }
+
+                                var buffer = Encoding.UTF8.GetBytes(responseContent);
+                                response.ContentLength64 = buffer.Length;
+                                response.OutputStream.Write(buffer, 0, buffer.Length);
+                                response.Close();
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"HTTP server error: {ex.Message}");
+                            }
+                        }
+                    })
+                    { IsBackground = true };
+                    thread.Start();
+
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to start HTTP server: {ex.Message}");
+                    return false;
+                }
+            }), "bool");
+
+            // Work in progress 'Shared Memory'
+            WorkingCreateGlobal("SendToChannel", new Action<string>(channel.Add), "void");
+            WorkingCreateGlobal("ReceiveFromChannel", new Func<string>(channel.Take), "string");
+            WorkingCreateGlobal("GetChannelCount", new Func<double>(() => (double)channel.Count), "i32");
+
+            WorkingCreateGlobal("GetHttpRequestData", new Func<string>(() =>
+            {
+                lock (_httpLock) { return _lastHttpRequestData; }
+            }), "string");
+            WorkingCreateGlobal("GetHttpRequestMethod", new Func<string>(() =>
+            {
+                lock (_httpLock) { return _lastHttpRequestMethod; }
+            }), "string");
+            WorkingCreateGlobal("GetHttpRequestPath", new Func<string>(() =>
+            {
+                lock (_httpLock) { return _lastHttpRequestPath; }
+            }), "string");
+            WorkingCreateGlobal("SetHttpResponse", new Action<string>((resp) =>
+            {
+                lock (_httpLock) { _lastHttpRequestResponse = resp; }
+            }), "void");
         }
 
         public void WorkingCreateGlobal(string name, object value, object typeReturn)
