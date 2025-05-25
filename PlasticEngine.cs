@@ -93,8 +93,10 @@ namespace Plastic
                 ScanToken();
             }
             _tokens.Add(new Token(TokenType.EOF, "", null, _line));
+
             return _tokens;
         }
+
         private void ScanToken()
         {
             char c = Advance();
@@ -366,7 +368,7 @@ namespace Plastic
 
         public ProgramNode Parse()
         {
-            _current = 0; // Reset the current token position
+            _current = 0;      
             var program = new ProgramNode();
 
             while (!IsAtEnd())
@@ -378,11 +380,9 @@ namespace Plastic
                 }
                 catch (Exception ex)
                 {
-                    // Report the error, then synchronize
                     Console.WriteLine($"Error in Parse: {ex.Message}");
                     Console.WriteLine($"Current token: {Peek().Type} {Peek().Lexeme}");
 
-                    // Skip tokens until we find a statement boundary
                     Synchronize();
                 }
             }
@@ -425,6 +425,11 @@ namespace Plastic
                 return ParseDllImport();
             }
 
+            if (Match(TokenType.Import) || Match(TokenType.Reference) || Match(TokenType.Using))
+            {
+                return ParseImportStatement();
+            }
+
             if (Match(TokenType.Fn)) return ParseFunction("function");
             if (Match(TokenType.Let)) return ParseVarDecl();
             if (Match(TokenType.Struct)) return ParseStructDecl();
@@ -462,7 +467,7 @@ namespace Plastic
             string packageName;
             if (Match(TokenType.String))
             {
-                packageName = (string)Previous().Literal;
+                packageName = (string)Previous().Literal!;
             }
             else if (Match(TokenType.Identifier))
             {
@@ -482,6 +487,8 @@ namespace Plastic
 
             return new ImportStmt { PackageName = packageName, Type = importType };
         }
+
+
 
         private Expr ParseFieldAccess()
         {
@@ -673,7 +680,7 @@ namespace Plastic
             if (Match(TokenType.For)) return ParseFor();
             if (Match(TokenType.Return)) return ParseReturn();
             if (Match(TokenType.LBrace)) return new BlockStmt { Statements = ParseBlock() };
-            if (Match(TokenType.Let)) return ParseVarDecl(); // <-- Add this line
+            if (Match(TokenType.Let)) return ParseVarDecl();     
             return ParseExprStmt();
         }
 
@@ -890,7 +897,11 @@ namespace Plastic
                 Consume(TokenType.RParen, "Expect ')'.");
                 return new GroupingExpr { Expression = expr };
             }
-            // Defensive: error if a statement keyword is found in an expression context
+            if (Match(TokenType.Import) || Match(TokenType.Reference) || Match(TokenType.Using))
+            {
+                ImportStmt stmt = (ImportStmt)ParseImportStatement();
+                return new LiteralExpr { Value = "" };
+            }
             if (Check(TokenType.Let) || Check(TokenType.Fn) || Check(TokenType.If) || Check(TokenType.While) || Check(TokenType.For) || Check(TokenType.Return))
             {
                 throw new Exception($"Unexpected statement keyword '{Peek().Lexeme}' in expression context.");
@@ -2041,15 +2052,12 @@ namespace Plastic
             var returnType = dllImport.Function.ReturnType;
             var parameters = dllImport.Function.Params;
 
-            // Create a delegate type dynamically
             var delegateType = CreateDelegateType(returnType, parameters);
 
-            // Load the DLL and bind the function
             var handle = NativeLibrary.Load(dllPath);
             var functionPointer = NativeLibrary.GetExport(handle, functionName);
             var functionDelegate = Marshal.GetDelegateForFunctionPointer(functionPointer, delegateType);
 
-            // Register the function in the environment
             _environment.Define(functionName, functionDelegate);
         }
 
@@ -2298,8 +2306,36 @@ namespace Plastic
         }
         private string ResolvePackagePath(string packageName)
         {
-            var searchPath = "";
+            if (packageName.Contains(Path.DirectorySeparatorChar) || packageName.Contains('/'))
+            {
+                var basePath = System.Environment.CurrentDirectory;
+                var fullPath = Path.Combine(basePath, packageName);
 
+                if (Path.HasExtension(fullPath) && File.Exists(fullPath))
+                {
+                    return fullPath;
+                }
+                else
+                {
+                    var plPath = fullPath.EndsWith(".pl", StringComparison.OrdinalIgnoreCase)
+                        ? fullPath
+                        : fullPath + ".pl";
+                    if (File.Exists(plPath))
+                    {
+                        return plPath;
+                    }
+
+                    var plasticPath = fullPath.EndsWith(".plastic", StringComparison.OrdinalIgnoreCase)
+                        ? fullPath
+                        : fullPath + ".plastic";
+                    if (File.Exists(plasticPath))
+                    {
+                        return plasticPath;
+                    }
+                }
+            }
+
+            string searchPath = "";
             try
             {
                 var process = new System.Diagnostics.Process
@@ -2324,11 +2360,16 @@ namespace Plastic
             }
 
             var packagePath = packageName.Replace('.', Path.DirectorySeparatorChar);
-
-            var fullPath = Path.Combine(searchPath, $"{packagePath}.pl");
-            if (File.Exists(fullPath))
+            var combinedPath = Path.Combine(searchPath, $"{packagePath}.pl");
+            if (File.Exists(combinedPath))
             {
-                return fullPath;
+                return combinedPath;
+            }
+
+            combinedPath = Path.Combine(searchPath, $"{packagePath}.plastic");
+            if (File.Exists(combinedPath))
+            {
+                return combinedPath;
             }
 
             return null;
@@ -2658,6 +2699,12 @@ namespace Plastic
                 {
                     return $"curl error: {ex.Message}";
                 }
+            }), "string");
+
+            WorkingCreateGlobal("LoadString", new Func<string, string>((source) =>
+            {
+                var engine = new PlasticEngine();
+                return engine.Evaluate(source, false)?.ToString() ?? "";
             }), "string");
         }
 
