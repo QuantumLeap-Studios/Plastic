@@ -57,7 +57,7 @@ namespace Plastic.Helpers
             foreach (string binaryValue in binaryValues)
             {
                 int value = Convert.ToInt32(binaryValue, 2);
-                text.Append((char)value);
+                text.Append(value.ToString());
             }
             return text.ToString();
         }

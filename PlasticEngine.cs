@@ -1,12 +1,7 @@
 ﻿using Plastic.Helpers;
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.InteropServices;
-using System.Text;
 using static Plastic.TypeChecker;
 
 namespace Plastic
@@ -96,6 +91,23 @@ namespace Plastic
                     if (Match('/'))
                     {
                         while (Peek() != '\n' && !IsAtEnd()) Advance();
+                    }
+                    else if (Match('*'))
+                    {
+                        while (!(Peek() == '*' && PeekNext() == '/') && !IsAtEnd())
+                        {
+                            if (Peek() == '\n') _line++;
+                            Advance();
+                        }
+                        if (!IsAtEnd())
+                        {
+                            Advance(); // consume '*'
+                            Advance(); // consume '/'
+                        }
+                        else
+                        {
+                            throw new Exception("Unterminated multi-line comment.");
+                        }
                     }
                     else
                     {
@@ -1087,6 +1099,10 @@ namespace Plastic
         private static readonly TypeInfo _f64Type = new("f64", false, null, false, false, 0);
         private static readonly TypeInfo _stringType = new("string", false, null, false, false, 0);
         private static readonly TypeInfo _anyType = new("any", false, null, false, false, 0);
+        private static readonly TypeInfo _charType = new("char", false, null, false, false, 0);
+        private static readonly TypeInfo _arrayType = new("array", false, null, false, false, 0);
+        private static readonly TypeInfo _listType = new("list", false, null, false, false, 0);
+        private static readonly TypeInfo _mapType = new("map", false, null, false, false, 0);
 
         public void Check(ProgramNode program)
         {
@@ -1675,12 +1691,15 @@ namespace Plastic
                     {
                         int => _i32Type,
                         long => new TypeInfo("i64", false, null, false, false, 0),
-                        double or float => _f64Type, 
+                        double or float => _f64Type,
                         bool => _boolType,
                         string => _stringType,
+                        char => _charType,
+                        object[] => _arrayType,
+                        List<object> => _listType,
+                        Dictionary<string, object> => _mapType,
                         _ => _anyType
                     };
-
 
                 case VariableExpr ve:
                     if (_variables.TryGetValue(ve.Name, out var varInfo))
@@ -1933,15 +1952,16 @@ namespace Plastic
         {
             if (type == "i32" || type == "f64" || type == "bool" || type == "string" ||
                 type == "void" || type == "i64" || type == "f32" || type == "any" ||
+                type == "char" || type == "array" || type == "list" || type == "map" ||
+                type.StartsWith("List<") || type.StartsWith("Map<") ||
                 type.StartsWith("&mut ") || type.StartsWith("&") ||
-                type.StartsWith("fn(") && type.Contains("->"))
+                (type.StartsWith("fn(") && type.Contains("->")))
             {
                 return true;
             }
 
             return _userTypes.ContainsKey(type);
         }
-
 
         private bool IsNumericType(string type)
         {
@@ -2306,6 +2326,59 @@ namespace Plastic
             switch (expr)
             {
                 case LiteralExpr lit:
+                    if (lit.Value is string s && s.Length == 1 &&
+                        lit.Value.ToString().StartsWith("'") && lit.Value.ToString().EndsWith("'"))
+                    {
+                        return s[0];
+                    }
+                    else if (lit.Value is string arrayStr &&
+                            arrayStr.StartsWith("[") && arrayStr.EndsWith("]"))
+                    {
+                        var content = arrayStr.Substring(1, arrayStr.Length - 2).Trim();
+                        if (string.IsNullOrWhiteSpace(content))
+                            return new object[0];
+
+                        var elements = content.Split(',')
+                            .Select(e => Evaluate(new LiteralExpr { Value = e.Trim() }))
+                            .ToArray();
+                        return elements;
+                    }
+                    else if (lit.Value is string listStr &&
+                            listStr.StartsWith("list[") && listStr.EndsWith("]"))
+                    {
+                        var content = listStr.Substring(5, listStr.Length - 6).Trim();
+                        if (string.IsNullOrWhiteSpace(content))
+                            return new List<object>();
+
+                        var elements = content.Split(',')
+                            .Select(e => Evaluate(new LiteralExpr { Value = e.Trim() }))
+                            .ToList();
+                        return elements;
+                    }
+                    else if (lit.Value is string mapStr &&
+                            mapStr.StartsWith("{") && mapStr.EndsWith("}"))
+                    {
+                        var content = mapStr.Substring(1, mapStr.Length - 2).Trim();
+                        if (string.IsNullOrWhiteSpace(content))
+                            return new Dictionary<string, object>();
+
+                        var map = new Dictionary<string, object>();
+                        var pairs = content.Split(',');
+                        foreach (var pair in pairs)
+                        {
+                            var keyValue = pair.Split(':');
+                            if (keyValue.Length == 2)
+                            {
+                                var key = keyValue[0].Trim();
+                                if (key.StartsWith("\"") && key.EndsWith("\""))
+                                    key = key.Substring(1, key.Length - 2);
+
+                                var value = Evaluate(new LiteralExpr { Value = keyValue[1].Trim() });
+                                map[key] = value;
+                            }
+                        }
+                        return map;
+                    }
                     return lit.Value;
 
                 case VariableExpr ve:
@@ -2933,7 +3006,11 @@ namespace Plastic
                         string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(method, "PATCH", StringComparison.OrdinalIgnoreCase))
                     {
-                        request.Content = new System.Net.Http.StringContent(data ?? "", Encoding.UTF8, "application/json");
+                        request.Content = new StringContent(
+                            data ?? "",
+                            System.Text.Encoding.UTF8,
+                            "application/json"
+                        );
                     }
                     else if (!string.IsNullOrEmpty(data) && (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) || string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase)))
                     {
@@ -3024,6 +3101,34 @@ namespace Plastic
             WorkingCreateGlobal("array", new Func<int, object[]>(size => new object[size]), "array");
             WorkingCreateGlobal("map", new Func<object>(() => new Dictionary<string, object>()), "map");
             WorkingCreateGlobal("list", new Func<object>(() => new List<object>()), "list");
+
+            WorkingCreateGlobal("addtolist", new Func<List<object>, object, bool>((list, item) =>
+            {
+                if (list == null) throw new ArgumentNullException(nameof(list));
+                list.Add(item);
+                return true;
+            }), "bool");
+            WorkingCreateGlobal("removefromlist", new Func<List<object>, object, bool>((list, item) =>
+            {
+                if (list == null) throw new ArgumentNullException(nameof(list));
+                return list.Remove(item);
+            }), "bool");
+            WorkingCreateGlobal("getfromlist", new Func<List<object>, int, object>((list, index) =>
+            {
+                if (list == null) throw new ArgumentNullException(nameof(list));
+                if (index < 0 || index >= list.Count)
+                    throw new IndexOutOfRangeException($"Index {index} is out of range for list of size {list.Count}.");
+                return list[index];
+            }), "object");
+            WorkingCreateGlobal("settolist", new Func<List<object>, int, object, bool>((list, index, item) =>
+            {
+                if (list == null) throw new ArgumentNullException(nameof(list));
+                if (index < 0 || index >= list.Count)
+                    throw new IndexOutOfRangeException($"Index {index} is out of range for list of size {list.Count}.");
+                list[index] = item;
+                return true;
+            }), "bool");
+
             WorkingCreateGlobal("random", new Func<double>(() => new Random().NextDouble()), "f64");
             WorkingCreateGlobal("time", new Func<long>(() => DateTimeOffset.Now.ToUnixTimeMilliseconds()), "i64");
             WorkingCreateGlobal("parseFloat", new Func<string, double>(s => double.Parse(s)), "f64");
@@ -3123,7 +3228,7 @@ namespace Plastic
                                     responseContent = _lastHttpRequestResponse;
                                 }
 
-                                var buffer = Encoding.UTF8.GetBytes(responseContent);
+                                var buffer = System.Text.Encoding.UTF8.GetBytes(responseContent);
                                 response.ContentLength64 = buffer.Length;
                                 response.OutputStream.Write(buffer, 0, buffer.Length);
                                 response.Close();
