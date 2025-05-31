@@ -386,6 +386,7 @@ namespace Plastic
         }
 
         private OwnershipTracker _ownership = new();
+        public List<string> Errors { get; private set; } = new List<string>();
 
         public ProgramNode Parse()
         {
@@ -401,10 +402,11 @@ namespace Plastic
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error in Parse: {ex.Message}");
-                    Console.WriteLine($"Current token: {Peek().Type} {Peek().Lexeme}");
-
                     Synchronize();
+
+                    Errors.Add("Error at line " + _tokens[_current].Line + ": " + ex.Message);
+
+                    return null;
                 }
             }
 
@@ -3273,6 +3275,74 @@ namespace Plastic
             {
                 lock (_httpLock) { _lastHttpRequestResponse = resp; }
             }), "void");
+        }
+
+        public List<string> GetErrors(string source, bool readPlugins = true)
+        {
+            var errors = new List<string>();
+            try
+            {
+                var lexer = new Lexer(source);
+                List<Token> tokens;
+                try
+                {
+                    tokens = lexer.ScanTokens();
+                }
+                catch (Exception lexEx)
+                {
+                    errors.Add($"Lexer error: {lexEx.Message}");
+                    return errors;
+                }
+
+                var parser = new Parser(tokens);
+                ProgramNode program;
+                try
+                {
+                    parser._current = 0;
+                    program = parser.Parse();
+                    if(program == null)
+                    {
+                        foreach(string error in parser.Errors)
+                        {
+                            errors.Add(error);
+                        }
+                        return errors;
+                    }
+                }
+                catch (Exception parseEx)
+                {
+                    errors.Add($"Parser error: {parseEx.Message}");
+                    return errors;
+                }
+
+                if (readPlugins)
+                {
+                    try
+                    {
+                        ProcessImports(program);
+                    }
+                    catch (Exception importEx)
+                    {
+                        errors.Add($"Import error: {importEx.Message}");
+                        return errors;
+                    }
+                }
+
+                try
+                {
+                    var checker = new TypeChecker();
+                    checker.Check(program);
+                }
+                catch (Exception typeEx)
+                {
+                    errors.Add($"Type error: {typeEx.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Unknown error: {ex.Message}");
+            }
+            return errors;
         }
 
         public void WorkingCreateGlobal(string name, object value, object typeReturn)
